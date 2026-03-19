@@ -25,6 +25,7 @@
         activeLyricIndex: -1,
         desiredPlaybackState: 'paused',
         queueStepInFlight: false,
+        isTrackTransitioning: false,
         lastPlayerStatePersistAt: 0,
         lastMediaPositionSyncAt: 0,
         prefetchedTrackMedia: null,
@@ -294,15 +295,16 @@
         }
     }
 
-    function updateMediaSessionPlaybackState() {
+    function updateMediaSessionPlaybackState(options = {}) {
         if (!('mediaSession' in navigator)) {
             return;
         }
 
         try {
-            navigator.mediaSession.playbackState = (!elements.playerAudio.paused && !elements.playerAudio.ended)
-                ? 'playing'
-                : 'paused';
+            const keepPlayingDuringTransition = options.keepPlayingDuringTransition !== false;
+            const isPlaying = (!elements.playerAudio.paused && !elements.playerAudio.ended)
+                || (keepPlayingDuringTransition && state.isTrackTransitioning && state.desiredPlaybackState === 'playing');
+            navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
         } catch (error) {
             console.warn('更新系统播放状态失败:', error);
         }
@@ -340,6 +342,23 @@
         state.desiredPlaybackState = nextState === 'playing' ? 'playing' : 'paused';
         updateMediaSessionPlaybackState();
         persistPlayerState();
+    }
+
+    function beginTrackTransition(track) {
+        state.isTrackTransitioning = true;
+        state.desiredPlaybackState = 'playing';
+        if (track) {
+            updateMediaSessionMetadata(track);
+        }
+        updateMediaSessionPlaybackState();
+    }
+
+    function endTrackTransition(options = {}) {
+        state.isTrackTransitioning = false;
+        if (options.paused) {
+            state.desiredPlaybackState = 'paused';
+        }
+        updateMediaSessionPlaybackState();
     }
 
     async function resumeAudioPlayback(options = {}) {
@@ -1685,7 +1704,7 @@
 
         elements.playerStatus.textContent = `正在请求 ${track.title} 的播放地址...`;
         updateCurrentShowcase(track, quality);
-        state.desiredPlaybackState = 'playing';
+        beginTrackTransition(track);
         persistPlayerState({ force: true });
 
         try {
@@ -1723,10 +1742,12 @@
             elements.playerAudio.load();
             void loadLyrics(mediaTrack);
             await elements.playerAudio.play();
+            endTrackTransition();
             maybePrefetchNextTrack({ force: true });
             persistPlayerState({ force: true });
             return true;
         } catch (error) {
+            endTrackTransition({ paused: true });
             elements.playerStatus.textContent = '播放失败';
             UI.showToast(error.message || '获取播放地址失败', 'error');
             persistPlayerState({ force: true });
@@ -1911,6 +1932,11 @@
             }
         });
 
+        elements.playerAudio.addEventListener('playing', () => {
+            endTrackTransition();
+            updateMediaSessionPlaybackState();
+        });
+
         elements.playerAudio.addEventListener('timeupdate', () => {
             syncLyricByCurrentTime();
             maybePrefetchNextTrack();
@@ -1926,6 +1952,11 @@
         });
 
         elements.playerAudio.addEventListener('pause', () => {
+            if (state.isTrackTransitioning && state.desiredPlaybackState === 'playing') {
+                updateMediaSessionPlaybackState();
+                return;
+            }
+
             if (!elements.playerAudio.ended) {
                 markDesiredPlaybackState('paused');
             }
@@ -1936,7 +1967,8 @@
 
         elements.playerAudio.addEventListener('ended', () => {
             if (state.currentTrack && state.currentQueueIndex >= 0 && state.currentQueueIndex < state.queue.length - 1) {
-                state.desiredPlaybackState = 'playing';
+                const nextTrack = getNextQueueTrack();
+                beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, { silentBoundary: true });
                 return;
