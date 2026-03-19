@@ -8,6 +8,7 @@
     const PLAYER_STATE_PERSIST_INTERVAL_MS = 1500;
     const MEDIA_POSITION_SYNC_INTERVAL_MS = 1000;
     const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
+    const EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS = 0.45;
 
     const state = {
         plugins: [],
@@ -29,7 +30,9 @@
         lastPlayerStatePersistAt: 0,
         lastMediaPositionSyncAt: 0,
         prefetchedTrackMedia: null,
-        prefetchingTrackKey: ''
+        prefetchingTrackKey: '',
+        nearEndAdvanceTrackKey: '',
+        autoAdvancingTrackKey: ''
     };
 
     const elements = {
@@ -295,6 +298,18 @@
         }
     }
 
+    function clearMediaSessionMetadata() {
+        if (!('mediaSession' in navigator)) {
+            return;
+        }
+
+        try {
+            navigator.mediaSession.metadata = null;
+        } catch (error) {
+            console.warn('清空系统媒体元数据失败:', error);
+        }
+    }
+
     function updateMediaSessionPlaybackState(options = {}) {
         if (!('mediaSession' in navigator)) {
             return;
@@ -359,6 +374,42 @@
             state.desiredPlaybackState = 'paused';
         }
         updateMediaSessionPlaybackState();
+    }
+
+    function refreshMediaSessionPresentation(track, options = {}) {
+        if (!('mediaSession' in navigator)) {
+            return;
+        }
+
+        const forceRebuild = Boolean(options.forceRebuild);
+        const delay = Math.max(0, Number(options.delay) || 0);
+        const targetTrack = track || state.currentTrack;
+
+        const apply = () => {
+            if (!targetTrack) {
+                return;
+            }
+
+            if (forceRebuild) {
+                clearMediaSessionMetadata();
+                try {
+                    navigator.mediaSession.playbackState = 'none';
+                } catch (error) {
+                    // 忽略不支持 none 的实现
+                }
+            }
+
+            updateMediaSessionMetadata(targetTrack);
+            updateMediaSessionPlaybackState();
+            syncMediaSessionPositionState({ force: true });
+        };
+
+        if (delay > 0) {
+            window.setTimeout(apply, delay);
+            return;
+        }
+
+        apply();
     }
 
     async function resumeAudioPlayback(options = {}) {
@@ -588,6 +639,44 @@
         }
 
         void prefetchTrackMedia(nextTrack, nextTrack.defaultQuality);
+    }
+
+    async function maybeAdvanceBeforeTrackEnds() {
+        if (state.queueStepInFlight || state.isTrackTransitioning) {
+            return;
+        }
+
+        const currentTrack = state.currentTrack;
+        const nextTrack = getNextQueueTrack();
+        if (!currentTrack || !nextTrack) {
+            return;
+        }
+
+        const duration = Number(elements.playerAudio.duration);
+        const currentTime = Number(elements.playerAudio.currentTime) || 0;
+        if (!Number.isFinite(duration) || duration <= 0) {
+            return;
+        }
+
+        const remaining = duration - currentTime;
+        if (remaining > EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS) {
+            return;
+        }
+
+        const currentTrackKey = getTrackKey(currentTrack);
+        if (state.nearEndAdvanceTrackKey === currentTrackKey) {
+            return;
+        }
+
+        if (!canUsePrefetchedTrack(nextTrack, nextTrack.defaultQuality)) {
+            return;
+        }
+
+        state.nearEndAdvanceTrackKey = currentTrackKey;
+        state.autoAdvancingTrackKey = getTrackKey(nextTrack);
+        beginTrackTransition(nextTrack);
+        persistPlayerState({ force: true });
+        await stepQueue(1, { silentBoundary: true });
     }
 
     function updateLyricDialogState() {
@@ -1688,6 +1777,8 @@
             return false;
         }
 
+        state.nearEndAdvanceTrackKey = '';
+
         if (Array.isArray(options.queue) && options.queue.length > 0) {
             state.queue = options.queue.map(item => ({ ...item }));
             state.currentQueueIndex = Number.isInteger(options.queueIndex)
@@ -1743,11 +1834,18 @@
             void loadLyrics(mediaTrack);
             await elements.playerAudio.play();
             endTrackTransition();
+            if (state.autoAdvancingTrackKey === getTrackKey(mediaTrack)) {
+                refreshMediaSessionPresentation(mediaTrack, { forceRebuild: true });
+                refreshMediaSessionPresentation(mediaTrack, { forceRebuild: true, delay: 180 });
+                refreshMediaSessionPresentation(mediaTrack, { delay: 520 });
+                state.autoAdvancingTrackKey = '';
+            }
             maybePrefetchNextTrack({ force: true });
             persistPlayerState({ force: true });
             return true;
         } catch (error) {
             endTrackTransition({ paused: true });
+            state.autoAdvancingTrackKey = '';
             elements.playerStatus.textContent = '播放失败';
             UI.showToast(error.message || '获取播放地址失败', 'error');
             persistPlayerState({ force: true });
@@ -1935,11 +2033,16 @@
         elements.playerAudio.addEventListener('playing', () => {
             endTrackTransition();
             updateMediaSessionPlaybackState();
+            if (state.autoAdvancingTrackKey && state.currentTrack && state.autoAdvancingTrackKey === getTrackKey(state.currentTrack)) {
+                refreshMediaSessionPresentation(state.currentTrack, { forceRebuild: true });
+                refreshMediaSessionPresentation(state.currentTrack, { delay: 180 });
+            }
         });
 
         elements.playerAudio.addEventListener('timeupdate', () => {
             syncLyricByCurrentTime();
             maybePrefetchNextTrack();
+            void maybeAdvanceBeforeTrackEnds();
             syncMediaSessionPositionState();
             persistPlayerState();
         });
@@ -1966,8 +2069,13 @@
         });
 
         elements.playerAudio.addEventListener('ended', () => {
+            if (state.isTrackTransitioning || state.queueStepInFlight) {
+                return;
+            }
+
             if (state.currentTrack && state.currentQueueIndex >= 0 && state.currentQueueIndex < state.queue.length - 1) {
                 const nextTrack = getNextQueueTrack();
+                state.autoAdvancingTrackKey = getTrackKey(nextTrack);
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, { silentBoundary: true });
