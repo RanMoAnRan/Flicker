@@ -10,6 +10,7 @@
     const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
     const EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS = 0.45;
     const PREFETCH_AHEAD_COUNT = 4;
+    const MAX_AUTO_SKIP_ATTEMPTS = 12;
 
     const state = {
         plugins: [],
@@ -664,7 +665,10 @@
         state.nearEndAdvanceTrackKey = currentTrackKey;
         beginTrackTransition(nextTrack);
         persistPlayerState({ force: true });
-        await stepQueue(1, { silentBoundary: true });
+        await stepQueue(1, {
+            silentBoundary: true,
+            autoSkipOnFailure: true
+        });
     }
 
     function updateLyricDialogState() {
@@ -1829,7 +1833,11 @@
         } catch (error) {
             endTrackTransition({ paused: true });
             elements.playerStatus.textContent = '播放失败';
-            UI.showToast(error.message || '获取播放地址失败', 'error');
+            if (options.suppressFailureToast) {
+                elements.playerStatus.textContent = `${track.title} 无法播放，正在尝试下一首`;
+            } else {
+                UI.showToast(error.message || '获取播放地址失败', 'error');
+            }
             persistPlayerState({ force: true });
             return false;
         }
@@ -1859,10 +1867,44 @@
         state.queueStepInFlight = true;
 
         try {
-            await playTrack(targetTrack, targetTrack.defaultQuality, {
-                queue: state.queue,
-                queueIndex: targetIndex
-            });
+            const shouldAutoSkipOnFailure = Boolean(options.autoSkipOnFailure && direction > 0);
+            const maxAttempts = shouldAutoSkipOnFailure
+                ? Math.min(
+                    Number.isFinite(options.maxAttempts) ? Number(options.maxAttempts) : MAX_AUTO_SKIP_ATTEMPTS,
+                    Math.max(1, state.queue.length)
+                )
+                : 1;
+
+            let attempts = 0;
+            let nextIndex = targetIndex;
+            let played = false;
+
+            while (attempts < maxAttempts && nextIndex >= 0 && nextIndex < state.queue.length) {
+                const nextTrack = state.queue[nextIndex];
+                const success = await playTrack(nextTrack, nextTrack.defaultQuality, {
+                    queue: state.queue,
+                    queueIndex: nextIndex,
+                    suppressFailureToast: shouldAutoSkipOnFailure
+                });
+
+                if (success) {
+                    played = true;
+                    break;
+                }
+
+                if (!shouldAutoSkipOnFailure) {
+                    break;
+                }
+
+                attempts += 1;
+                nextIndex += direction;
+            }
+
+            if (!played && shouldAutoSkipOnFailure) {
+                markDesiredPlaybackState('paused');
+                elements.playerStatus.textContent = '后续歌曲均无法播放，自动播放已停止';
+                UI.showToast('后续歌曲均无法播放，已停止自动播放', 'error');
+            }
         } finally {
             state.queueStepInFlight = false;
         }
@@ -2055,7 +2097,10 @@
                 const nextTrack = getNextQueueTrack();
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
-                void stepQueue(1, { silentBoundary: true });
+                void stepQueue(1, {
+                    silentBoundary: true,
+                    autoSkipOnFailure: true
+                });
                 return;
             }
 
