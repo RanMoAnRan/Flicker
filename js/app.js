@@ -1,11 +1,13 @@
 const CONFIG = {
     PROXY_URL: '/api/proxy',
     DEFAULT_SOURCES: [
-        { id: 1, name: '量子影视', url: 'https://cj.lziapi.com/api.php/provide/vod/', active: true },
-        { id: 2, name: '量子资讯', url: 'https://cj.lziapi.com/api.php/provide/art/', active: false },
-        { id: 3, name: '红牛影视', url: 'https://www.hongniuzy2.com/api.php/provide/vod/', active: false },
-        { id: 4, name: '红牛M3U8', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnm3u8/', active: false },
-        { id: 5, name: '红牛云播', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnyun/', active: false }
+        { id: 1, name: '资源1', url: 'http://sdzyapi.com/api.php/provide/vod/', active: false },
+        { id: 2, name: '百度', url: 'https://api.apibdzy.com/api.php/provide/vod/', active: false },
+        { id: 3, name: '量子影视', url: 'https://cj.lziapi.com/api.php/provide/vod/', active: true },
+        { id: 4, name: '量子资讯', url: 'https://cj.lziapi.com/api.php/provide/art/', active: false },
+        { id: 5, name: '红牛影视', url: 'https://www.hongniuzy2.com/api.php/provide/vod/', active: false },
+        { id: 6, name: '红牛M3U8', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnm3u8/', active: false },
+        { id: 7, name: '红牛云播', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnyun/', active: false }
     ],
     STORAGE_KEYS: {
         SOURCES: 'dianying_sources',
