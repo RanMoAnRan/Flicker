@@ -1226,6 +1226,14 @@ body.music-page {
     width: 100%;
     border-radius: 14px;
     height: 42px;
+    accent-color: var(--accent-strong);
+    color-scheme: dark;
+    background-color: color-mix(in srgb, var(--surface-strong) 88%, rgba(0, 0, 0, 0.22));
+}
+
+:root[data-theme="light"] .music-player-controls audio {
+    color-scheme: light;
+    background-color: color-mix(in srgb, var(--surface-strong) 92%, rgba(255, 255, 255, 0.82));
 }
 
 .music-queue-list {
