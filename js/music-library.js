@@ -9,6 +9,7 @@
     const MEDIA_POSITION_SYNC_INTERVAL_MS = 1000;
     const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
     const EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS = 0.45;
+    const PREFETCH_AHEAD_COUNT = 4;
 
     const state = {
         plugins: [],
@@ -29,8 +30,8 @@
         isTrackTransitioning: false,
         lastPlayerStatePersistAt: 0,
         lastMediaPositionSyncAt: 0,
-        prefetchedTrackMedia: null,
-        prefetchingTrackKey: '',
+        prefetchedTrackMedia: {},
+        prefetchingTrackKeys: [],
         nearEndAdvanceTrackKey: ''
     };
 
@@ -524,13 +525,44 @@
         return getQueueTrack(state.currentQueueIndex + 1);
     }
 
-    function canUsePrefetchedTrack(track, quality) {
-        if (!state.prefetchedTrackMedia || !track) {
-            return false;
+    function getPrefetchedTrackMedia(track, quality) {
+        if (!track) {
+            return null;
         }
 
-        return state.prefetchedTrackMedia.requestKey === getTrackRequestKey(track, quality)
-            && Boolean(state.prefetchedTrackMedia.media?.url);
+        const requestKey = getTrackRequestKey(track, quality);
+        const cached = state.prefetchedTrackMedia?.[requestKey];
+        return cached && cached.media?.url ? cached : null;
+    }
+
+    function canUsePrefetchedTrack(track, quality) {
+        return Boolean(getPrefetchedTrackMedia(track, quality));
+    }
+
+    function getUpcomingRequestKeys() {
+        const keys = [];
+        for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
+            const track = getQueueTrack(state.currentQueueIndex + offset);
+            if (!track) {
+                break;
+            }
+            keys.push(getTrackRequestKey(track, track.defaultQuality));
+        }
+        return keys;
+    }
+
+    function prunePrefetchedTrackMedia() {
+        const allowedKeys = new Set(getUpcomingRequestKeys());
+        const nextCache = {};
+
+        Object.entries(state.prefetchedTrackMedia || {}).forEach(([requestKey, value]) => {
+            if (!allowedKeys.has(requestKey)) {
+                return;
+            }
+            nextCache[requestKey] = value;
+        });
+
+        state.prefetchedTrackMedia = nextCache;
     }
 
     async function prefetchTrackMedia(track, quality) {
@@ -539,11 +571,11 @@
         }
 
         const requestKey = getTrackRequestKey(track, quality);
-        if (state.prefetchingTrackKey === requestKey || canUsePrefetchedTrack(track, quality)) {
+        if (state.prefetchingTrackKeys.includes(requestKey) || canUsePrefetchedTrack(track, quality)) {
             return;
         }
 
-        state.prefetchingTrackKey = requestKey;
+        state.prefetchingTrackKeys.push(requestKey);
 
         try {
             const resolved = await requestTrackMedia(track, quality);
@@ -551,30 +583,30 @@
                 return;
             }
 
-            state.prefetchedTrackMedia = {
+            state.prefetchedTrackMedia[requestKey] = {
                 requestKey,
                 trackKey: getTrackKey(track),
                 quality: quality || track.defaultQuality,
                 mediaTrack: resolved.mediaTrack,
                 media: resolved.media
             };
+            prunePrefetchedTrackMedia();
         } catch (error) {
             // 预取失败不影响当前播放，等真正切歌时再正常请求。
         } finally {
-            if (state.prefetchingTrackKey === requestKey) {
-                state.prefetchingTrackKey = '';
-            }
+            state.prefetchingTrackKeys = state.prefetchingTrackKeys.filter(item => item !== requestKey);
         }
     }
 
     function maybePrefetchNextTrack(options = {}) {
-        const nextTrack = getNextQueueTrack();
-        if (!nextTrack) {
-            return;
-        }
-
         if (options.force) {
-            void prefetchTrackMedia(nextTrack, nextTrack.defaultQuality);
+            for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
+                const track = getQueueTrack(state.currentQueueIndex + offset);
+                if (!track) {
+                    break;
+                }
+                void prefetchTrackMedia(track, track.defaultQuality);
+            }
             return;
         }
 
@@ -589,7 +621,13 @@
             return;
         }
 
-        void prefetchTrackMedia(nextTrack, nextTrack.defaultQuality);
+        for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
+            const track = getQueueTrack(state.currentQueueIndex + offset);
+            if (!track) {
+                break;
+            }
+            void prefetchTrackMedia(track, track.defaultQuality);
+        }
     }
 
     async function maybeAdvanceBeforeTrackEnds() {
@@ -1743,6 +1781,8 @@
             }
         }
 
+        prunePrefetchedTrackMedia();
+
         elements.playerStatus.textContent = `正在请求 ${track.title} 的播放地址...`;
         updateCurrentShowcase(track, quality);
         beginTrackTransition(track);
@@ -1750,14 +1790,13 @@
 
         try {
             const requestQuality = quality || track.defaultQuality;
-            const resolved = canUsePrefetchedTrack(track, requestQuality)
-                ? state.prefetchedTrackMedia
-                : await requestTrackMedia(track, requestQuality);
+            const prefetched = getPrefetchedTrackMedia(track, requestQuality);
+            const resolved = prefetched || await requestTrackMedia(track, requestQuality);
             const mediaTrack = resolved.mediaTrack;
             const media = resolved.media || {};
 
-            if (canUsePrefetchedTrack(track, requestQuality)) {
-                state.prefetchedTrackMedia = null;
+            if (prefetched) {
+                delete state.prefetchedTrackMedia[getTrackRequestKey(track, requestQuality)];
             }
 
             state.currentTrack = mediaTrack;
