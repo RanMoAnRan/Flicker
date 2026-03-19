@@ -132,6 +132,69 @@ const ThemeManager = {
     }
 };
 
+const AccessGuard = {
+    SETTINGS_PASSWORD: '666666',
+    SESSION_KEY: 'fuguang_settings_access',
+
+    hasSettingsAccess() {
+        try {
+            return sessionStorage.getItem(this.SESSION_KEY) === 'granted';
+        } catch (error) {
+            return false;
+        }
+    },
+
+    grantSettingsAccess() {
+        try {
+            sessionStorage.setItem(this.SESSION_KEY, 'granted');
+            return true;
+        } catch (error) {
+            return false;
+        }
+    },
+
+    promptSettingsPassword(promptText = '请输入片源管理密码') {
+        const input = window.prompt(promptText);
+        if (input === null) {
+            return false;
+        }
+
+        if (String(input).trim() === this.SETTINGS_PASSWORD) {
+            this.grantSettingsAccess();
+            return true;
+        }
+
+        window.alert('密码错误');
+        return false;
+    },
+
+    openSettingsPage(event = null) {
+        if (event?.preventDefault) {
+            event.preventDefault();
+        }
+
+        if (!this.hasSettingsAccess() && !this.promptSettingsPassword()) {
+            return false;
+        }
+
+        window.location.href = 'settings.html';
+        return false;
+    },
+
+    ensureSettingsAccess(redirectUrl = 'index.html') {
+        if (this.hasSettingsAccess()) {
+            return true;
+        }
+
+        if (this.promptSettingsPassword('请输入片源管理密码')) {
+            return true;
+        }
+
+        window.location.replace(redirectUrl);
+        return false;
+    }
+};
+
 function escapeHtml(value) {
     const stringValue = String(value ?? '');
     return stringValue
@@ -401,6 +464,9 @@ const SourceManager = {
         const sources = this.getSources();
         const index = sources.findIndex(source => source.id === id);
         if (index !== -1) {
+            if (sources[index].builtin) {
+                return false;
+            }
             sources[index].name = name;
             sources[index].url = normalizeSourceUrl(url);
             this.saveSources(sources);

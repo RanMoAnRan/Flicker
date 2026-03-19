@@ -101,6 +101,9 @@
         let isCheckingAllSources = false;
 
         function init() {
+            if (!AccessGuard.ensureSettingsAccess()) {
+                return;
+            }
             loadSourceList();
         }
 
@@ -143,7 +146,10 @@
                             ${source.builtin ? '<span class="badge">内置</span>' : ''}
                         </div>
                         <div class="source-item-actions">
-                            <button class="btn-secondary" onclick="editSource(${source.id})">编辑</button>
+                            ${source.builtin
+                                ? '<button class="btn-secondary" type="button" disabled title="内置片源不允许编辑">编辑</button>'
+                                : `<button class="btn-secondary" onclick="editSource(${source.id})">编辑</button>`
+                            }
                             <button class="btn-success" onclick="useSource(${source.id})">使用</button>
                             ${source.builtin
                                 ? '<button class="btn-danger" type="button" disabled title="内置片源不允许删除">删除</button>'
@@ -331,7 +337,11 @@
             }
 
             if (editingId) {
-                SourceManager.updateSource(editingId, name, url);
+                const updated = SourceManager.updateSource(editingId, name, url);
+                if (!updated) {
+                    UI.showToast('内置片源不允许编辑', 'error');
+                    return;
+                }
                 delete sourceHealth[editingId];
                 UI.showToast('数据源已更新', 'success');
             } else {
@@ -349,6 +359,11 @@
         function editSource(id) {
             const source = SourceManager.getSources().find(item => item.id === id);
             if (!source) {
+                return;
+            }
+
+            if (source.builtin) {
+                UI.showToast('内置片源不允许编辑', 'error');
                 return;
             }
 
