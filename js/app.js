@@ -1,13 +1,13 @@
 const CONFIG = {
     PROXY_URL: '/api/proxy',
     DEFAULT_SOURCES: [
-        { id: 1, name: '资源1', url: 'http://sdzyapi.com/api.php/provide/vod/', active: false },
-        { id: 2, name: '百度', url: 'https://api.apibdzy.com/api.php/provide/vod/', active: false },
-        { id: 3, name: '量子影视', url: 'https://cj.lziapi.com/api.php/provide/vod/', active: true },
-        { id: 4, name: '量子资讯', url: 'https://cj.lziapi.com/api.php/provide/art/', active: false },
-        { id: 5, name: '红牛影视', url: 'https://www.hongniuzy2.com/api.php/provide/vod/', active: false },
-        { id: 6, name: '红牛M3U8', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnm3u8/', active: false },
-        { id: 7, name: '红牛云播', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnyun/', active: false }
+        { id: 1, name: '资源1', url: 'http://sdzyapi.com/api.php/provide/vod/', active: false, builtin: true },
+        { id: 2, name: '百度', url: 'https://api.apibdzy.com/api.php/provide/vod/', active: false, builtin: true },
+        { id: 3, name: '量子影视', url: 'https://cj.lziapi.com/api.php/provide/vod/', active: true, builtin: true },
+        { id: 4, name: '量子资讯', url: 'https://cj.lziapi.com/api.php/provide/art/', active: false, builtin: true },
+        { id: 5, name: '红牛影视', url: 'https://www.hongniuzy2.com/api.php/provide/vod/', active: false, builtin: true },
+        { id: 6, name: '红牛M3U8', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnm3u8/', active: false, builtin: true },
+        { id: 7, name: '红牛云播', url: 'https://www.hongniuzy2.com/api.php/provide/vod/from/hnyun/', active: false, builtin: true }
     ],
     STORAGE_KEYS: {
         SOURCES: 'dianying_sources',
@@ -312,12 +312,22 @@ const SourceManager = {
     },
 
     ensureBuiltinSources(existingSources) {
-        const normalizedExisting = [...existingSources];
+        const builtinUrlSet = new Set(
+            CONFIG.DEFAULT_SOURCES.map(source => normalizeSourceUrl(source.url))
+        );
+        const normalizedExisting = existingSources.map(source => ({
+            ...source,
+            url: normalizeSourceUrl(source.url),
+            builtin: Boolean(source.builtin) || builtinUrlSet.has(normalizeSourceUrl(source.url))
+        }));
         const existingUrlSet = new Set(
             normalizedExisting.map(source => normalizeSourceUrl(source.url))
         );
         let nextId = normalizedExisting.reduce((max, source) => Math.max(max, Number(source.id) || 0), 0) + 1;
-        let hasChanges = false;
+        let hasChanges = normalizedExisting.some((source, index) => (
+            source.url !== existingSources[index]?.url ||
+            Boolean(source.builtin) !== Boolean(existingSources[index]?.builtin)
+        ));
 
         CONFIG.DEFAULT_SOURCES.forEach(defaultSource => {
             const normalizedUrl = normalizeSourceUrl(defaultSource.url);
@@ -329,7 +339,8 @@ const SourceManager = {
                 id: nextId,
                 name: defaultSource.name,
                 url: normalizedUrl,
-                active: false
+                active: false,
+                builtin: true
             });
             existingUrlSet.add(normalizedUrl);
             nextId += 1;
@@ -378,7 +389,8 @@ const SourceManager = {
             id: maxId + 1,
             name: name,
             url: normalizeSourceUrl(url),
-            active: false
+            active: false,
+            builtin: false
         };
         sources.push(newSource);
         this.saveSources(sources);
@@ -400,6 +412,10 @@ const SourceManager = {
     deleteSource(id) {
         let sources = this.getSources();
         if (sources.length <= 1) {
+            return false;
+        }
+        const targetSource = sources.find(source => source.id === id);
+        if (!targetSource || targetSource.builtin) {
             return false;
         }
         sources = sources.filter(source => source.id !== id);

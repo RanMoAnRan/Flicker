@@ -140,17 +140,22 @@
                         <div class="source-item-name">
                             <strong>${escapeHtml(source.name)}</strong>
                             ${source.id === currentSource.id ? '<span class="badge">当前使用</span>' : ''}
+                            ${source.builtin ? '<span class="badge">内置</span>' : ''}
                         </div>
                         <div class="source-item-actions">
                             <button class="btn-secondary" onclick="editSource(${source.id})">编辑</button>
                             <button class="btn-success" onclick="useSource(${source.id})">使用</button>
-                            <button class="btn-danger" onclick="deleteSource(${source.id})">删除</button>
+                            ${source.builtin
+                                ? '<button class="btn-danger" type="button" disabled title="内置片源不允许删除">删除</button>'
+                                : `<button class="btn-danger" onclick="deleteSource(${source.id})">删除</button>`
+                            }
                         </div>
                     </div>
                     <div class="source-item-url">${escapeHtml(source.url)}</div>
                     ${renderSourceHealth(source)}
                     <div class="source-card-meta">
                         <span>片源编号 #${source.id}</span>
+                        <span>${source.builtin ? '内置片源' : '自定义片源'}</span>
                         <span>${source.id === currentSource.id ? '已激活' : '待切换'}</span>
                     </div>
                 </article>
@@ -362,6 +367,17 @@
         }
 
         function deleteSource(id) {
+            const source = SourceManager.getSources().find(item => item.id === id);
+            if (!source) {
+                UI.showToast('数据源不存在', 'error');
+                return;
+            }
+
+            if (source.builtin) {
+                UI.showToast('内置片源不允许删除', 'error');
+                return;
+            }
+
             if (!confirm('确定要删除这个数据源吗？')) {
                 return;
             }
