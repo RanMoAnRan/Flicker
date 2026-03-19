@@ -135,6 +135,9 @@ const ThemeManager = {
 const AccessGuard = {
     SETTINGS_PASSWORD: '666666',
     SESSION_KEY: 'fuguang_settings_access',
+    HIDE_DELAY_MS: 220,
+    elements: null,
+    pendingResolver: null,
 
     hasSettingsAccess() {
         try {
@@ -153,19 +156,159 @@ const AccessGuard = {
         }
     },
 
-    promptSettingsPassword(promptText = '请输入片源管理密码') {
-        const input = window.prompt(promptText);
-        if (input === null) {
-            return false;
+    ensureModal() {
+        if (this.elements) {
+            return this.elements;
         }
 
-        if (String(input).trim() === this.SETTINGS_PASSWORD) {
-            this.grantSettingsAccess();
+        const overlay = document.createElement('div');
+        overlay.className = 'access-guard-overlay';
+        overlay.hidden = true;
+        overlay.innerHTML = `
+            <div class="access-guard-backdrop" data-close-access-guard></div>
+            <div class="access-guard-modal panel-card" role="dialog" aria-modal="true" aria-labelledby="accessGuardTitle">
+                <div class="access-guard-header">
+                    <div>
+                        <p class="eyebrow">片源管理</p>
+                        <h2 id="accessGuardTitle">请输入访问密码</h2>
+                        <p class="section-caption access-guard-caption" id="accessGuardCaption">验证通过后才能进入片源管理页面。</p>
+                    </div>
+                    <button type="button" class="access-guard-close btn-secondary" aria-label="关闭" data-close-access-guard>关闭</button>
+                </div>
+                <form class="access-guard-form" id="accessGuardForm">
+                    <label class="access-guard-label" for="accessGuardPassword">访问密码</label>
+                    <input
+                        type="password"
+                        id="accessGuardPassword"
+                        class="access-guard-input"
+                        inputmode="numeric"
+                        autocomplete="current-password"
+                        placeholder="请输入密码"
+                    >
+                    <p class="access-guard-error" id="accessGuardError" hidden>密码错误，请重新输入。</p>
+                    <div class="access-guard-actions">
+                        <button type="button" class="btn-secondary" id="accessGuardCancel">取消</button>
+                        <button type="submit" class="btn-primary">进入片源管理</button>
+                    </div>
+                </form>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        const modal = overlay.querySelector('.access-guard-modal');
+        const form = overlay.querySelector('#accessGuardForm');
+        const input = overlay.querySelector('#accessGuardPassword');
+        const error = overlay.querySelector('#accessGuardError');
+        const caption = overlay.querySelector('#accessGuardCaption');
+        const cancel = overlay.querySelector('#accessGuardCancel');
+        const closeButtons = overlay.querySelectorAll('[data-close-access-guard]');
+
+        const close = (granted = false) => {
+            if (!this.pendingResolver) {
+                return;
+            }
+
+            const resolver = this.pendingResolver;
+            this.pendingResolver = null;
+            overlay.classList.remove('is-visible');
+            window.setTimeout(() => {
+                overlay.hidden = true;
+            }, this.HIDE_DELAY_MS);
+            resolver(granted);
+        };
+
+        const showError = (message) => {
+            error.textContent = message;
+            error.hidden = false;
+            input.setAttribute('aria-invalid', 'true');
+        };
+
+        const clearError = () => {
+            error.hidden = true;
+            error.textContent = '密码错误，请重新输入。';
+            input.removeAttribute('aria-invalid');
+        };
+
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            const value = String(input.value || '').trim();
+            if (value === this.SETTINGS_PASSWORD) {
+                this.grantSettingsAccess();
+                clearError();
+                close(true);
+                return;
+            }
+
+            showError('密码错误，请重新输入。');
+            input.focus();
+            input.select();
+        });
+
+        input.addEventListener('input', () => {
+            if (!error.hidden) {
+                clearError();
+            }
+        });
+
+        cancel.addEventListener('click', () => {
+            close(false);
+        });
+
+        closeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                close(false);
+            });
+        });
+
+        overlay.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                close(false);
+            }
+        });
+
+        this.elements = {
+            overlay,
+            modal,
+            form,
+            input,
+            error,
+            caption,
+            close,
+            clearError
+        };
+
+        return this.elements;
+    },
+
+    showPasswordDialog(captionText = '验证通过后才能进入片源管理页面。') {
+        const { overlay, input, caption, clearError } = this.ensureModal();
+
+        if (this.pendingResolver) {
+            return Promise.resolve(false);
+        }
+
+        caption.textContent = captionText;
+        input.value = '';
+        clearError();
+        overlay.hidden = false;
+
+        return new Promise(resolve => {
+            this.pendingResolver = resolve;
+            window.requestAnimationFrame(() => {
+                overlay.classList.add('is-visible');
+                input.focus();
+            });
+        });
+    },
+
+    async requestSettingsAccess() {
+        if (this.hasSettingsAccess()) {
             return true;
         }
 
-        window.alert('密码错误');
-        return false;
+        return await this.showPasswordDialog();
     },
 
     openSettingsPage(event = null) {
@@ -173,20 +316,21 @@ const AccessGuard = {
             event.preventDefault();
         }
 
-        if (!this.hasSettingsAccess() && !this.promptSettingsPassword()) {
-            return false;
-        }
-
-        window.location.href = 'settings.html';
+        this.requestSettingsAccess().then(granted => {
+            if (granted) {
+                window.location.href = 'settings.html';
+            }
+        });
         return false;
     },
 
-    ensureSettingsAccess(redirectUrl = 'index.html') {
+    async ensureSettingsAccess(redirectUrl = 'index.html') {
         if (this.hasSettingsAccess()) {
             return true;
         }
 
-        if (this.promptSettingsPassword('请输入片源管理密码')) {
+        const granted = await this.showPasswordDialog('请输入密码后继续访问片源管理。');
+        if (granted) {
             return true;
         }
 

@@ -100,8 +100,8 @@
         let sourceHealth = {};
         let isCheckingAllSources = false;
 
-        function init() {
-            if (!AccessGuard.ensureSettingsAccess()) {
+        async function init() {
+            if (!(await AccessGuard.ensureSettingsAccess())) {
                 return;
             }
             loadSourceList();

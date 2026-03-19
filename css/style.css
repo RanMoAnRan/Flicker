@@ -2698,6 +2698,120 @@ body.music-page {
     border-color: rgba(255, 118, 118, 0.3);
 }
 
+.access-guard-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 96;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+}
+
+.access-guard-overlay[hidden] {
+    display: none;
+}
+
+.access-guard-overlay.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.access-guard-backdrop {
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(circle at top, rgba(255, 193, 107, 0.12), transparent 32%),
+        rgba(7, 10, 16, 0.58);
+    backdrop-filter: blur(16px);
+}
+
+.access-guard-modal {
+    width: min(460px, calc(100vw - 32px));
+    padding: 24px;
+    z-index: 1;
+    transform: translateY(16px) scale(0.985);
+    opacity: 0.92;
+    transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+}
+
+.access-guard-overlay.is-visible .access-guard-modal {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+}
+
+.access-guard-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.access-guard-header h2 {
+    font-family: "Noto Serif SC", "Songti SC", serif;
+    font-size: 1.5rem;
+    line-height: 1.12;
+}
+
+.access-guard-caption {
+    margin-top: 8px;
+    max-width: 280px;
+}
+
+.access-guard-close {
+    flex-shrink: 0;
+}
+
+.access-guard-form {
+    display: grid;
+    gap: 14px;
+}
+
+.access-guard-label {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+}
+
+.access-guard-input {
+    width: 100%;
+    min-height: 52px;
+    border-radius: 18px;
+    border: 1px solid var(--surface-border);
+    background: var(--field-bg);
+    color: var(--text-primary);
+    padding: 0 18px;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+
+.access-guard-input:focus {
+    border-color: rgba(255, 177, 100, 0.48);
+    box-shadow: 0 0 0 4px rgba(255, 177, 100, 0.12);
+}
+
+.access-guard-input[aria-invalid="true"] {
+    border-color: rgba(255, 118, 118, 0.5);
+    box-shadow: 0 0 0 4px rgba(255, 118, 118, 0.1);
+}
+
+.access-guard-error {
+    color: #ff8d8d;
+    font-size: 0.92rem;
+    margin: -2px 0 2px;
+}
+
+.access-guard-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 4px;
+}
+
 @media (max-width: 1200px) {
     .hero-layout,
     .player-stage-grid,
@@ -2716,6 +2830,45 @@ body.music-page {
     .detail-facts-grid,
     .detail-line-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .access-guard-overlay {
+        align-items: flex-end;
+        padding: 12px;
+    }
+
+    .access-guard-modal {
+        width: 100%;
+        border-radius: 28px;
+        padding: 20px 18px 18px;
+        transform: translateY(24px) scale(0.99);
+    }
+
+    .access-guard-header {
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .access-guard-header h2 {
+        font-size: 1.26rem;
+    }
+
+    .access-guard-caption {
+        max-width: none;
+    }
+
+    .access-guard-close,
+    .access-guard-actions .btn-secondary,
+    .access-guard-actions .btn-primary {
+        min-height: 44px;
+    }
+
+    .access-guard-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
     }
 }
 
