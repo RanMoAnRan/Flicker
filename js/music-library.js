@@ -7,6 +7,7 @@
     const PLAYER_STATE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
     const PLAYER_STATE_PERSIST_INTERVAL_MS = 1500;
     const MEDIA_POSITION_SYNC_INTERVAL_MS = 1000;
+    const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
 
     const state = {
         plugins: [],
@@ -25,7 +26,9 @@
         desiredPlaybackState: 'paused',
         queueStepInFlight: false,
         lastPlayerStatePersistAt: 0,
-        lastMediaPositionSyncAt: 0
+        lastMediaPositionSyncAt: 0,
+        prefetchedTrackMedia: null,
+        prefetchingTrackKey: ''
     };
 
     const elements = {
@@ -143,8 +146,39 @@
         `).join('');
     }
 
+    function inferArtworkMimeType(url) {
+        const path = String(url || '').split('?')[0].toLowerCase();
+        if (path.endsWith('.png')) {
+            return 'image/png';
+        }
+        if (path.endsWith('.webp')) {
+            return 'image/webp';
+        }
+        if (path.endsWith('.gif')) {
+            return 'image/gif';
+        }
+        return 'image/jpeg';
+    }
+
+    function buildArtworkEntries(url) {
+        if (!url) {
+            return [];
+        }
+
+        const type = inferArtworkMimeType(url);
+        return ['96x96', '128x128', '192x192', '256x256', '384x384', '512x512'].map(size => ({
+            src: url,
+            sizes: size,
+            type
+        }));
+    }
+
     function getPlayerSourceUrl() {
         return elements.playerAudio.currentSrc || elements.playerAudio.src || '';
+    }
+
+    function getTrackRequestKey(track, quality) {
+        return `${getTrackKey(track)}::${quality || track?.defaultQuality || 'standard'}`;
     }
 
     function persistPlayerState(options = {}) {
@@ -253,9 +287,7 @@
                 title: track?.title || '浮光音乐库',
                 artist: track?.artist || '',
                 album: track?.album || track?.plugin || '浮光',
-                artwork: track?.artwork
-                    ? [{ src: track.artwork }]
-                    : []
+                artwork: buildArtworkEntries(track?.artwork)
             });
         } catch (error) {
             console.warn('更新系统媒体元数据失败:', error);
@@ -444,6 +476,99 @@
         }
 
         void resumeAudioPlayback();
+    }
+
+    async function requestTrackMedia(track, quality) {
+        const query = new URLSearchParams({
+            plugin: track.plugin,
+            id: track.id,
+            quality: quality || track.defaultQuality
+        });
+        const payload = await fetchJson(`/api/music/media?${query.toString()}`);
+        return {
+            mediaTrack: mergeTrackData(track, payload.track || track),
+            media: payload.media || {}
+        };
+    }
+
+    function getQueueTrack(index) {
+        if (index < 0 || index >= state.queue.length) {
+            return null;
+        }
+
+        return state.queue[index] || null;
+    }
+
+    function getNextQueueTrack() {
+        return getQueueTrack(state.currentQueueIndex + 1);
+    }
+
+    function canUsePrefetchedTrack(track, quality) {
+        if (!state.prefetchedTrackMedia || !track) {
+            return false;
+        }
+
+        return state.prefetchedTrackMedia.requestKey === getTrackRequestKey(track, quality)
+            && Boolean(state.prefetchedTrackMedia.media?.url);
+    }
+
+    async function prefetchTrackMedia(track, quality) {
+        if (!track) {
+            return;
+        }
+
+        const requestKey = getTrackRequestKey(track, quality);
+        if (state.prefetchingTrackKey === requestKey || canUsePrefetchedTrack(track, quality)) {
+            return;
+        }
+
+        state.prefetchingTrackKey = requestKey;
+
+        try {
+            const resolved = await requestTrackMedia(track, quality);
+            if (!resolved.media?.url) {
+                return;
+            }
+
+            state.prefetchedTrackMedia = {
+                requestKey,
+                trackKey: getTrackKey(track),
+                quality: quality || track.defaultQuality,
+                mediaTrack: resolved.mediaTrack,
+                media: resolved.media
+            };
+        } catch (error) {
+            // 预取失败不影响当前播放，等真正切歌时再正常请求。
+        } finally {
+            if (state.prefetchingTrackKey === requestKey) {
+                state.prefetchingTrackKey = '';
+            }
+        }
+    }
+
+    function maybePrefetchNextTrack(options = {}) {
+        const nextTrack = getNextQueueTrack();
+        if (!nextTrack) {
+            return;
+        }
+
+        if (options.force) {
+            void prefetchTrackMedia(nextTrack, nextTrack.defaultQuality);
+            return;
+        }
+
+        const duration = Number(elements.playerAudio.duration);
+        const currentTime = Number(elements.playerAudio.currentTime) || 0;
+
+        if (!Number.isFinite(duration) || duration <= 0) {
+            return;
+        }
+
+        if (duration - currentTime > NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS) {
+            return;
+        }
+
+        void prefetchTrackMedia(nextTrack, nextTrack.defaultQuality);
     }
 
     function updateLyricDialogState() {
@@ -1150,6 +1275,7 @@
         elements.playerTitle.textContent = track.title;
         elements.playerArtist.textContent = `${track.artist}${track.album ? ` · ${track.album}` : ''}`;
         elements.playerTags.innerHTML = renderTrackTags(track);
+        elements.playerAudio.setAttribute('title', track.title || '浮光音乐库');
         updateLyricDialogTitle(track);
         updateMediaSessionMetadata(track);
     }
@@ -1563,17 +1689,19 @@
         persistPlayerState({ force: true });
 
         try {
-            const query = new URLSearchParams({
-                plugin: track.plugin,
-                id: track.id,
-                quality: quality || track.defaultQuality
-            });
-            const payload = await fetchJson(`/api/music/media?${query.toString()}`);
-            const mediaTrack = mergeTrackData(track, payload.track || track);
-            const media = payload.media || {};
+            const requestQuality = quality || track.defaultQuality;
+            const resolved = canUsePrefetchedTrack(track, requestQuality)
+                ? state.prefetchedTrackMedia
+                : await requestTrackMedia(track, requestQuality);
+            const mediaTrack = resolved.mediaTrack;
+            const media = resolved.media || {};
+
+            if (canUsePrefetchedTrack(track, requestQuality)) {
+                state.prefetchedTrackMedia = null;
+            }
 
             state.currentTrack = mediaTrack;
-            state.currentQuality = media.quality || quality || mediaTrack.defaultQuality;
+            state.currentQuality = media.quality || requestQuality || mediaTrack.defaultQuality;
             patchTrackCollections(mediaTrack, {
                 renderResults: true,
                 renderQueue: false
@@ -1595,6 +1723,7 @@
             elements.playerAudio.load();
             void loadLyrics(mediaTrack);
             await elements.playerAudio.play();
+            maybePrefetchNextTrack({ force: true });
             persistPlayerState({ force: true });
             return true;
         } catch (error) {
@@ -1778,11 +1907,13 @@
             markDesiredPlaybackState('playing');
             if (state.currentTrack) {
                 elements.playerStatus.textContent = `正在播放 ${state.currentTrack.title}`;
+                updateMediaSessionMetadata(state.currentTrack);
             }
         });
 
         elements.playerAudio.addEventListener('timeupdate', () => {
             syncLyricByCurrentTime();
+            maybePrefetchNextTrack();
             syncMediaSessionPositionState();
             persistPlayerState();
         });
