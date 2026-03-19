@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>影视详情 - 浮光</title>
+    <script>
+        try {
+            document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('fuguang_theme') || '"dark"');
+        } catch (error) {
+            document.documentElement.dataset.theme = 'dark';
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="site-page detail-page">
+    <header class="header">
+        <div class="container header-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">浮</span>
+                <span class="logo-copy">
+                    <strong>浮光</strong>
+                    <em>CINEMA INDEX</em>
+                </span>
+            </a>
+            <div class="header-right">
+                <div class="source-selector">
+                    <label for="sourceSelector">片源</label>
+                    <select id="sourceSelector"></select>
+                </div>
+                <a href="index.html" class="settings-btn">返回片库</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-shell detail-shell">
+        <section class="container detail-stage" id="detailHeader">
+            <div class="panel-card detail-loading">
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>正在载入影片资料...</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="container panel-card synopsis-card" id="synopsisCard" style="display: none;">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">剧情概览</p>
+                    <h2>本片介绍</h2>
+                </div>
+            </div>
+            <div id="synopsisText" class="synopsis-text"></div>
+        </section>
+
+        <section class="container panel-card episode-panel" id="episodeSection" style="display: none;">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">片源线路</p>
+                    <h2>选集播放</h2>
+                </div>
+                <span class="section-caption" id="episodeSummary">正在整理播放线路</span>
+            </div>
+            <div class="source-tabs cinematic-source-tabs" id="sourceTabs"></div>
+            <div class="episode-grid cinematic-episode-grid" id="episodeGrid"></div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-inner">
+            <p>若当前线路无法播放，可切换到其他线路，或返回首页更换片源继续尝试。</p>
+        </div>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script>
+        let videoId = null;
+        let currentSource = null;
+        let videoData = null;
+        let playSources = [];
+        let currentSourceIndex = 0;
+        let currentContentKind = 'vod';
+
+        function getDetailCopy() {
+            return currentContentKind === 'art'
+                ? {
+                    loading: '正在载入资讯资料...',
+                    missing: '未找到该资讯',
+                    eyebrow: '浮光资讯',
+                    synopsisEyebrow: '正文速览',
+                    synopsisTitle: '文章内容',
+                    synopsisEmpty: '暂无正文内容，稍后可尝试切换数据源查看。',
+                    primaryAction: '阅读全文',
+                    summaryCaption: '阅读内容',
+                    returnText: '返回资讯库'
+                }
+                : {
+                    loading: '正在载入影片资料...',
+                    missing: '未找到该影视',
+                    eyebrow: '浮光详情页',
+                    synopsisEyebrow: '剧情概览',
+                    synopsisTitle: '本片介绍',
+                    synopsisEmpty: '暂无剧情简介，稍后可尝试切换数据源查看更完整的资料信息。',
+                    primaryAction: '立即播放',
+                    summaryCaption: '片源线路',
+                    returnText: '返回首页'
+                };
+        }
+
+        async function init() {
+            videoId = getUrlParam('id');
+            if (!videoId) {
+                showError('缺少视频ID');
+                return;
+            }
+
+            currentSource = SourceManager.getSourceById(getUrlParam('source_id')) || SourceManager.getCurrentSource();
+            await loadVideoDetail();
+        }
+
+        async function loadVideoDetail() {
+            try {
+                const data = DataAdapter.normalizeResponse(await Api.getVideoDetail(currentSource, videoId), currentSource);
+                currentContentKind = data.source_kind;
+
+                if (data.list && data.list.length > 0) {
+                    videoData = data.list[0];
+                    playSources = preparePlaySources(videoData);
+                    document.title = `${videoData.vod_name} - 浮光`;
+                    renderDetail();
+                    renderSynopsis();
+                    renderEpisodesSection();
+                } else {
+                    showError(getDetailCopy().missing);
+                }
+            } catch (error) {
+                console.error('加载详情失败:', error);
+                showError('加载失败，请重试');
+            }
+        }
+
+        function preparePlaySources(video) {
+            if (video?.kind === 'art' || !video?.vod_play_from || !video?.vod_play_url) {
+                return [];
+            }
+            return VideoParser.sortSourcesByM3u8(VideoParser.parsePlaySources(video.vod_play_from, video.vod_play_url));
+        }
+
+        function renderDetail() {
+            const copy = getDetailCopy();
+            const isArticle = videoData?.kind === 'art';
+            const badges = VideoMeta.getStatusBadges(videoData, playSources).map(item => UI.renderBadge(item.label, item.tone)).join('');
+            const totalEpisodes = VideoMeta.getEpisodeCount(playSources);
+            const topSource = playSources[0];
+            const header = document.getElementById('detailHeader');
+            const facts = isArticle
+                ? [
+                    { label: '分类', value: videoData.type_name || '未分类' },
+                    { label: '更新时间', value: VideoMeta.formatTime(videoData.vod_time) },
+                    { label: '作者', value: videoData.art_author || '暂无信息' },
+                    { label: '来源', value: videoData.art_from || '暂无信息' },
+                    { label: '评分', value: videoData.art_score || '暂无评分' },
+                    { label: '内容类型', value: '资讯正文' }
+                ]
+                : [
+                    { label: '分类', value: videoData.type_name || '未分类' },
+                    { label: '更新时间', value: VideoMeta.formatTime(videoData.vod_time) },
+                    { label: '导演', value: videoData.vod_director || '暂无信息' },
+                    { label: '演员', value: videoData.vod_actor || '暂无信息' },
+                    { label: '线路数', value: playSources.length > 0 ? `${playSources.length} 条` : '暂无' },
+                    { label: '剧集数', value: totalEpisodes > 0 ? `${totalEpisodes} 集` : '单片' }
+                ];
+            const summaryCards = isArticle
+                ? [
+                    {
+                        label: '摘要',
+                        value: videoData.art_blurb || '当前资讯未提供独立摘要',
+                        extra: '正文内容已整理到下方阅读区'
+                    },
+                    {
+                        label: '阅读模式',
+                        value: videoData.art_author || videoData.art_from || '站内阅读',
+                        extra: '资讯源不提供播放器线路'
+                    }
+                ]
+                : [
+                    {
+                        label: '首选线路',
+                        value: VideoMeta.getSourceName(topSource),
+                        extra: topSource?.isM3u8 ? '优先播放 M3U8 源' : '标准片源线路'
+                    },
+                    {
+                        label: '更新状态',
+                        value: videoData.vod_remarks || '待更新',
+                        extra: '切换线路后可获得更多可播选择'
+                    }
+                ];
+
+            header.innerHTML = `
+                <article class="panel-card detail-stage-card">
+                    <div class="detail-poster-shell">
+                        ${UI.renderPosterPlaceholder(`detail-poster-${videoId}`, videoData.vod_name || '浮光')}
+                    </div>
+                    <div class="detail-main-copy">
+                        <p class="eyebrow">${escapeHtml(copy.eyebrow)}</p>
+                        <div class="detail-badges">${badges}</div>
+                        <h1 class="detail-title">${escapeHtml(videoData.vod_name || '未命名影片')}</h1>
+                        <p class="detail-subtitle">${escapeHtml(VideoMeta.getDescription(videoData))}</p>
+
+                        <div class="detail-facts-grid">
+                            ${facts.map(item => `
+                                <div class="detail-fact-card">
+                                    <span>${escapeHtml(item.label)}</span>
+                                    <strong>${escapeHtml(item.value)}</strong>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <div class="detail-actions">
+                            ${isArticle
+                                ? `<button class="btn-primary" onclick="scrollToSynopsis()">${escapeHtml(copy.primaryAction)}</button>`
+                                : (topSource ? `<button class="btn-primary" onclick="playEpisode(0, 0)">${escapeHtml(copy.primaryAction)}</button>` : '')
+                            }
+                            <a class="btn-secondary" href="index.html">${escapeHtml(copy.returnText)}</a>
+                        </div>
+
+                        <div class="detail-line-summary">
+                            ${summaryCards.map(item => `
+                                <div class="detail-line-card">
+                                    <span>${escapeHtml(item.label)}</span>
+                                    <strong>${escapeHtml(item.value || copy.summaryCaption)}</strong>
+                                    <em>${escapeHtml(item.extra)}</em>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </article>
+            `;
+
+            UI.loadPosterAsync(videoId, currentSource, `detail-poster-${videoId}`, videoData.vod_name);
+        }
+
+        function renderSynopsis() {
+            const synopsisCard = document.getElementById('synopsisCard');
+            const synopsisText = document.getElementById('synopsisText');
+            const copy = getDetailCopy();
+            const heading = synopsisCard.querySelector('.section-heading');
+            const eyebrow = heading.querySelector('.eyebrow');
+            const title = heading.querySelector('h2');
+            const isArticle = videoData?.kind === 'art';
+            const content = isArticle
+                ? (videoData?.vod_content || videoData?.art_blurb || '')
+                : stripHtml(videoData?.vod_content || '');
+
+            synopsisCard.style.display = 'block';
+            eyebrow.textContent = copy.synopsisEyebrow;
+            title.textContent = copy.synopsisTitle;
+            if (isArticle) {
+                synopsisText.innerHTML = RichText.renderParagraphs(content, copy.synopsisEmpty);
+            } else {
+                synopsisText.innerHTML = `<p>${escapeHtml(content || copy.synopsisEmpty)}</p>`;
+            }
+        }
+
+        function renderEpisodesSection() {
+            const section = document.getElementById('episodeSection');
+            if (videoData?.kind === 'art' || playSources.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+            document.getElementById('episodeSummary').textContent = `共 ${playSources.length} 条线路，${VideoMeta.getEpisodeCount(playSources)} 个可播条目`;
+            renderSourceTabs();
+            renderEpisodes(0);
+        }
+
+        function renderSourceTabs() {
+            document.getElementById('sourceTabs').innerHTML = playSources.map((source, index) => `
+                <button class="source-tab ${index === currentSourceIndex ? 'active' : ''}" onclick="selectSource(${index})">
+                    <span>${escapeHtml(source.name)}</span>
+                    ${source.isM3u8 ? '<em>M3U8</em>' : '<em>线路</em>'}
+                </button>
+            `).join('');
+        }
+
+        function selectSource(index) {
+            currentSourceIndex = index;
+            document.querySelectorAll('.source-tab').forEach((tab, tabIndex) => {
+                tab.classList.toggle('active', tabIndex === index);
+            });
+            renderEpisodes(index);
+        }
+
+        function renderEpisodes(sourceIndex) {
+            const source = playSources[sourceIndex];
+            const grid = document.getElementById('episodeGrid');
+
+            if (!source || !source.episodes || source.episodes.length === 0) {
+                grid.innerHTML = '<p class="muted-copy">该线路暂无剧集。</p>';
+                return;
+            }
+
+            grid.innerHTML = source.episodes.map((episode, index) => `
+                <button class="episode-btn ${index === 0 ? 'active' : ''}" onclick="playEpisode(${sourceIndex}, ${index})">
+                    <span>${escapeHtml(episode.name)}</span>
+                    <em>${index === 0 ? '推荐' : '播放'}</em>
+                </button>
+            `).join('');
+        }
+
+        function playEpisode(sourceIndex, episodeIndex) {
+            window.location.href = getPlayerUrl(videoId, episodeIndex, sourceIndex, currentSource?.id);
+        }
+
+        function scrollToSynopsis() {
+            document.getElementById('synopsisCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function reloadAll() {
+            currentSource = SourceManager.getCurrentSource();
+            const url = new URL(window.location);
+            url.searchParams.set('source_id', currentSource.id);
+            window.location.href = url.toString();
+        }
+
+        function showError(message) {
+            document.getElementById('detailHeader').innerHTML = `
+                <div class="panel-card">
+                    <div class="empty-state">
+                        <div class="icon">😢</div>
+                        <h3>${escapeHtml(message)}</h3>
+                        <p>可以返回首页切换片源，或稍后再试。</p>
+                        <a class="btn-primary" href="index.html">返回首页</a>
+                    </div>
+                </div>
+            `;
+            document.getElementById('synopsisCard').style.display = 'none';
+            document.getElementById('episodeSection').style.display = 'none';
+        }
+
+        init();
+    </script>
+</body>
+</html>

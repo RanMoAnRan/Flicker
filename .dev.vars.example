@@ -1,0 +1,2 @@
+ADMIN_PASSWORD=请改成你自己的管理密码
+SESSION_SECRET=请改成更长的随机字符串

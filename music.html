@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音乐库 - 浮光</title>
+    <script>
+        try {
+            document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('fuguang_theme') || '"dark"');
+        } catch (error) {
+            document.documentElement.dataset.theme = 'dark';
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="site-page music-page">
+    <header class="header">
+        <div class="container header-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">乐</span>
+                <span class="logo-copy">
+                    <strong>浮光</strong>
+                    <em>MUSIC LIBRARY</em>
+                </span>
+            </a>
+            <div class="header-right">
+                <div class="search-box music-nav-search">
+                    <input type="text" id="musicSearchInput" placeholder="搜索歌曲 / 歌手 / 专辑">
+                    <button type="button" class="search-clear-btn" id="musicSearchClearButton" aria-label="清除搜索内容" title="清除">×</button>
+                    <button type="button" id="musicSearchButton">搜索音乐</button>
+                </div>
+                <a href="index.html" class="settings-btn ghost-btn">视频库</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-shell">
+        <section class="container panel-card">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">插件来源</p>
+                </div>
+                <span class="section-caption" id="musicPluginStatus">正在同步插件状态</span>
+            </div>
+            <div class="music-plugin-chips" id="musicPluginChips"></div>
+        </section>
+
+        <section class="container panel-card">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">搜索结果</p>
+                    <h2 id="musicResultTitle">先输入关键词开始搜索</h2>
+                </div>
+                <span class="section-caption" id="musicResultMeta">“全部搜索”默认只检索推荐音乐插件；你也可以单独点目录里的某个音乐插件试搜。</span>
+            </div>
+            <div class="music-results-grid" id="musicResults"></div>
+        </section>
+
+        <section class="container panel-card music-player-panel">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">播放器</p>
+                </div>
+                <span class="section-caption" id="musicPlayerStatus">等待播放</span>
+            </div>
+            <div class="music-player-grid">
+                <div class="music-player-meta music-lyric-trigger" id="musicLyricToggleButton" role="button" tabindex="0" aria-controls="musicLyricOverlay" aria-expanded="false">
+                    <div class="music-player-cover" id="playerCover">浮光</div>
+                    <div class="music-player-copy">
+                        <h3 id="playerTrackTitle">暂无播放中的歌曲</h3>
+                        <p id="playerTrackArtist">搜索一首歌，或从结果列表里直接播放。</p>
+                        <span class="music-player-hint">点击这里展开歌词</span>
+                        <div class="music-current-tags" id="playerTrackTags"></div>
+                    </div>
+                </div>
+                <div class="music-player-controls">
+                    <div class="music-player-actions-row">
+                        <div class="music-quality-row">
+                            <label for="playerQualitySelect">音质</label>
+                            <select id="playerQualitySelect"></select>
+                        </div>
+                        <button type="button" class="btn-secondary" id="prevTrackButton">上一首</button>
+                        <button type="button" class="btn-secondary" id="nextTrackButton">下一首</button>
+                        <button type="button" class="btn-secondary music-queue-toggle" id="musicQueueToggleButton" aria-controls="musicQueueOverlay" aria-expanded="false">
+                            <span>播放队列</span>
+                            <em id="musicQueueToggleBadge">0</em>
+                        </button>
+                    </div>
+                    <audio id="musicAudio" controls preload="none"></audio>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div class="music-queue-overlay" id="musicQueueOverlay" hidden>
+        <aside class="music-queue-drawer" id="musicQueueDrawer" role="dialog" aria-modal="true" aria-labelledby="musicQueueDrawerTitle">
+            <div class="music-queue-drawer-head">
+                <div class="music-queue-drawer-copy">
+                    <p class="eyebrow">播放队列</p>
+                    <h2 id="musicQueueDrawerTitle">当前搜索队列</h2>
+                    <p class="section-caption" id="musicQueueStatus">等待加入队列</p>
+                </div>
+                <div class="music-queue-drawer-tools">
+                    <span class="music-queue-count" id="musicQueueCount" hidden>0 首</span>
+                    <button type="button" class="music-queue-close" id="musicQueueCloseButton" aria-label="关闭播放队列">关闭</button>
+                    <button type="button" class="btn-secondary" id="clearQueueButton">清空队列</button>
+                </div>
+            </div>
+            <div class="music-queue-list" id="musicQueueList"></div>
+        </aside>
+    </div>
+
+    <div class="music-lyric-overlay" id="musicLyricOverlay" hidden>
+        <div class="music-lyric-modal" id="musicLyricDialog" role="dialog" aria-modal="true" aria-labelledby="musicLyricDialogTitle">
+            <div class="music-lyric-dialog-header">
+                <div>
+                    <p class="eyebrow">歌词</p>
+                    <h2 id="musicLyricDialogTitle">当前歌曲歌词</h2>
+                    <p class="section-caption" id="musicLyricStatus">等待载入歌词</p>
+                </div>
+                <button type="button" class="music-lyric-close" id="musicLyricCloseButton" aria-label="关闭歌词">关闭</button>
+            </div>
+            <div class="music-lyric-body" id="musicLyricBody"></div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script src="js/music-library.js"></script>
+</body>
+</html>

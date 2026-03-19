@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设置 - 浮光</title>
+    <script>
+        try {
+            document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('fuguang_theme') || '"dark"');
+        } catch (error) {
+            document.documentElement.dataset.theme = 'dark';
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="site-page settings-page">
+    <header class="header">
+        <div class="container header-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">浮</span>
+                <span class="logo-copy">
+                    <strong>浮光</strong>
+                    <em>SOURCE STUDIO</em>
+                </span>
+            </a>
+            <div class="header-right">
+                <a href="index.html" class="settings-btn">返回片库</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-shell settings-shell">
+        <section class="container settings-hero-grid">
+            <div class="panel-card settings-hero-card">
+                <p class="eyebrow">片源管理中心</p>
+                <h1>为浮光接入新的播放入口</h1>
+                <p>这里管理你的所有数据源。系统已预置一批当前可访问的苹果 CMS 接口，测试成功后即可在首页切换片源，快速重新编排整站片单。</p>
+                <div class="settings-kpi-row" id="settingsStats"></div>
+            </div>
+            <div class="panel-card settings-guide-card">
+                <p class="eyebrow">接入建议</p>
+                <h2>什么样的接口最适合</h2>
+                <ul class="settings-guide-list">
+                    <li>优先填写 CMS 采集接口的基础地址，例如 <code>/api.php/provide/vod/</code></li>
+                    <li>资讯类接口也可接入，例如 <code>/api.php/provide/art/</code>，系统会自动识别为资讯源</li>
+                    <li>刷新页面后会自动补齐内置推荐片源，不会覆盖你自己已添加的地址</li>
+                    <li>允许粘贴已带参数的完整地址，系统会自动兼容并规范化保存</li>
+                    <li>如果列表无结果，先测试连接，再尝试切换到其他片源</li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="container settings-main-grid">
+            <section class="panel-card source-form-card">
+                <div class="section-heading compact">
+                    <div>
+                        <p class="eyebrow">接入新片源</p>
+                        <h2 id="formTitle">添加数据源</h2>
+                    </div>
+                </div>
+
+                <div class="source-form">
+                    <div class="form-group">
+                        <label for="sourceName">数据源名称</label>
+                        <input type="text" id="sourceName" placeholder="例如：高清速播 / 资源站1">
+                    </div>
+                    <div class="form-group">
+                        <label for="sourceUrl">接口地址</label>
+                        <input type="text" id="sourceUrl" placeholder="例如：https://api.example.com/api.php/provide/vod/ 或 /art/">
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn-secondary" onclick="testSource()">测试连接</button>
+                        <button class="btn-primary" id="submitButton" onclick="addSource()">添加数据源</button>
+                    </div>
+                </div>
+
+                <div id="testResult"></div>
+            </section>
+
+            <section class="panel-card source-list-card">
+                <div class="section-heading compact">
+                    <div>
+                        <p class="eyebrow">当前片源</p>
+                        <h2>已配置的数据源</h2>
+                    </div>
+                    <div class="settings-list-tools">
+                        <span class="section-caption" id="sourceListSummary">正在读取数据源</span>
+                        <button class="btn-secondary" id="healthCheckButton" onclick="checkAllSources()">健康检查</button>
+                    </div>
+                </div>
+
+                <div class="source-list-grid" id="sourceList"></div>
+            </section>
+        </section>
+    </main>
+
+    <script src="js/app.js"></script>
+    <script>
+        let editingId = null;
+        let sourceHealth = {};
+        let isCheckingAllSources = false;
+
+        function init() {
+            loadSourceList();
+        }
+
+        function renderStats(sources, currentSource) {
+            const checkedResults = Object.values(sourceHealth).filter(item => item && item.status !== 'checking');
+            const healthyCount = checkedResults.filter(item => item.ok).length;
+            const stats = [
+                { label: '已接入片源', value: `${sources.length} 个` },
+                { label: '当前使用', value: currentSource?.name || '未选择' },
+                { label: '可用片源', value: checkedResults.length > 0 ? `${healthyCount} / ${checkedResults.length}` : '未检测' }
+            ];
+
+            document.getElementById('settingsStats').innerHTML = stats.map(item => `
+                <div class="summary-chip">
+                    <span>${escapeHtml(item.label)}</span>
+                    <strong>${escapeHtml(item.value)}</strong>
+                </div>
+            `).join('');
+        }
+
+        function loadSourceList() {
+            const sources = SourceManager.getSources();
+            const currentSource = SourceManager.getCurrentSource();
+            const container = document.getElementById('sourceList');
+
+            renderStats(sources, currentSource);
+            document.getElementById('sourceListSummary').textContent = `共 ${sources.length} 个片源，当前使用 ${currentSource?.name || '默认片源'}`;
+
+            if (sources.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">🛰️</div><h3>还没有片源</h3><p>先添加一个 CMS 接口地址开始使用。</p></div>';
+                return;
+            }
+
+            container.innerHTML = sources.map(source => `
+                <article class="source-item-card ${source.id === currentSource.id ? 'active' : ''}">
+                    <div class="source-item-header">
+                        <div class="source-item-name">
+                            <strong>${escapeHtml(source.name)}</strong>
+                            ${source.id === currentSource.id ? '<span class="badge">当前使用</span>' : ''}
+                        </div>
+                        <div class="source-item-actions">
+                            <button class="btn-secondary" onclick="editSource(${source.id})">编辑</button>
+                            <button class="btn-success" onclick="useSource(${source.id})">使用</button>
+                            <button class="btn-danger" onclick="deleteSource(${source.id})">删除</button>
+                        </div>
+                    </div>
+                    <div class="source-item-url">${escapeHtml(source.url)}</div>
+                    ${renderSourceHealth(source)}
+                    <div class="source-card-meta">
+                        <span>片源编号 #${source.id}</span>
+                        <span>${source.id === currentSource.id ? '已激活' : '待切换'}</span>
+                    </div>
+                </article>
+            `).join('');
+
+            const summary = checkedResultsSummary(sources);
+            document.getElementById('sourceListSummary').textContent = summary;
+            syncHealthCheckButton();
+        }
+
+        function checkedResultsSummary(sources) {
+            const checkedResults = Object.values(sourceHealth).filter(item => item && item.status !== 'checking');
+            const healthyCount = checkedResults.filter(item => item.ok).length;
+
+            if (isCheckingAllSources) {
+                return `正在检测 ${sources.length} 个片源的可用性...`;
+            }
+
+            if (checkedResults.length === 0) {
+                const currentSource = SourceManager.getCurrentSource();
+                return `共 ${sources.length} 个片源，当前使用 ${currentSource?.name || '默认片源'}`;
+            }
+
+            return `共 ${sources.length} 个片源，已检测 ${checkedResults.length} 个，其中 ${healthyCount} 个可用`;
+        }
+
+        function renderSourceHealth(source) {
+            const health = sourceHealth[source.id];
+            if (!health) {
+                return `
+                    <div class="source-health-panel">
+                        <div class="source-health-head">
+                            <strong>健康状态</strong>
+                            <span class="source-health-badge idle">未检测</span>
+                        </div>
+                        <div class="source-health-meta">
+                            <span>点击右上角“健康检查”批量检测</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (health.status === 'checking') {
+                return `
+                    <div class="source-health-panel checking">
+                        <div class="source-health-head">
+                            <strong>健康状态</strong>
+                            <span class="source-health-badge checking">检测中</span>
+                        </div>
+                        <div class="source-health-meta">
+                            <span>正在请求接口返回，请稍候...</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="source-health-panel ${health.ok ? 'success' : 'error'}">
+                    <div class="source-health-head">
+                        <strong>健康状态</strong>
+                        <span class="source-health-badge ${health.ok ? 'success' : 'error'}">${health.ok ? '正常' : '失败'}</span>
+                    </div>
+                    <div class="source-health-meta">
+                        <span>类型：${escapeHtml(health.kindLabel || '未知')}</span>
+                        <span>响应：${escapeHtml(`${health.durationMs} ms`)}</span>
+                        <span>数据：${escapeHtml(String(health.total || 0))} 条</span>
+                        <span>尝试：${escapeHtml(String(health.attempts || 1))} 次</span>
+                        ${health.ok ? `<span>分类：${escapeHtml(String(health.categories || 0))} 个</span>` : `<span>错误：${escapeHtml(health.error || '检测失败')}</span>`}
+                    </div>
+                </div>
+            `;
+        }
+
+        function syncHealthCheckButton() {
+            const button = document.getElementById('healthCheckButton');
+            if (!button) {
+                return;
+            }
+
+            button.disabled = isCheckingAllSources;
+            button.textContent = isCheckingAllSources ? '检查中...' : '健康检查';
+        }
+
+        async function testSource() {
+            const url = document.getElementById('sourceUrl').value.trim();
+            const resultDiv = document.getElementById('testResult');
+
+            if (!url) {
+                resultDiv.innerHTML = '<div class="test-result error">请输入接口地址</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="test-result">正在测试片源连通性...</div>';
+
+            const result = await Api.inspectSource(url);
+            if (result.ok) {
+                resultDiv.innerHTML = `
+                    <div class="test-result success">
+                        <strong>连接成功</strong>
+                        <p>接口返回正常，可读取 ${result.total} 条数据，识别到 ${result.categories} 个分类，类型为 ${escapeHtml(result.kindLabel)}，响应约 ${result.durationMs} ms。</p>
+                    </div>
+                `;
+                return;
+            }
+
+            resultDiv.innerHTML = `<div class="test-result error"><strong>连接失败</strong><p>${escapeHtml(result.error || '检测失败')}，响应约 ${result.durationMs} ms。</p></div>`;
+        }
+
+        async function checkAllSources() {
+            if (isCheckingAllSources) {
+                return;
+            }
+
+            const sources = SourceManager.getSources();
+            if (sources.length === 0) {
+                UI.showToast('当前没有可检测的片源', 'error');
+                return;
+            }
+
+            isCheckingAllSources = true;
+            let completedCount = 0;
+            sources.forEach(source => {
+                sourceHealth[source.id] = { status: 'checking' };
+            });
+            loadSourceList();
+
+            const results = [];
+            for (const source of sources) {
+                const result = await Api.inspectSource(source, { retryCount: 1, retryDelayMs: 500 });
+                sourceHealth[source.id] = {
+                    status: result.ok ? 'ok' : 'error',
+                    ...result
+                };
+                results.push(result);
+                completedCount += 1;
+                document.getElementById('sourceListSummary').textContent = `正在检测 ${sources.length} 个片源的可用性...（${completedCount}/${sources.length}）`;
+                loadSourceList();
+            }
+
+            isCheckingAllSources = false;
+            loadSourceList();
+
+            const healthyCount = results.filter(item => item.ok).length;
+            if (healthyCount === results.length) {
+                UI.showToast(`检查完成，${healthyCount} 个片源全部可用`, 'success');
+                return;
+            }
+
+            UI.showToast(`检查完成，${healthyCount} / ${results.length} 个片源可用`, healthyCount > 0 ? 'info' : 'error');
+        }
+
+        function resetForm() {
+            editingId = null;
+            document.getElementById('sourceName').value = '';
+            document.getElementById('sourceUrl').value = '';
+            document.getElementById('testResult').innerHTML = '';
+            document.getElementById('submitButton').textContent = '添加数据源';
+            document.getElementById('formTitle').textContent = '添加数据源';
+        }
+
+        function addSource() {
+            const name = document.getElementById('sourceName').value.trim();
+            const url = document.getElementById('sourceUrl').value.trim();
+
+            if (!name) {
+                UI.showToast('请输入数据源名称', 'error');
+                return;
+            }
+
+            if (!url) {
+                UI.showToast('请输入接口地址', 'error');
+                return;
+            }
+
+            if (editingId) {
+                SourceManager.updateSource(editingId, name, url);
+                delete sourceHealth[editingId];
+                UI.showToast('数据源已更新', 'success');
+            } else {
+                const newSource = SourceManager.addSource(name, url);
+                if (newSource?.id) {
+                    delete sourceHealth[newSource.id];
+                }
+                UI.showToast('数据源添加成功', 'success');
+            }
+
+            resetForm();
+            loadSourceList();
+        }
+
+        function editSource(id) {
+            const source = SourceManager.getSources().find(item => item.id === id);
+            if (!source) {
+                return;
+            }
+
+            editingId = id;
+            document.getElementById('sourceName').value = source.name;
+            document.getElementById('sourceUrl').value = source.url;
+            document.getElementById('submitButton').textContent = '保存修改';
+            document.getElementById('formTitle').textContent = '编辑数据源';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function useSource(id) {
+            SourceManager.setCurrentSource(id);
+            UI.showToast('已切换到此数据源', 'success');
+            loadSourceList();
+        }
+
+        function deleteSource(id) {
+            if (!confirm('确定要删除这个数据源吗？')) {
+                return;
+            }
+
+            const success = SourceManager.deleteSource(id);
+            if (success) {
+                delete sourceHealth[id];
+                UI.showToast('数据源已删除', 'success');
+                if (editingId === id) {
+                    resetForm();
+                }
+                loadSourceList();
+                return;
+            }
+
+            UI.showToast('至少需要保留一个数据源', 'error');
+        }
+
+        init();
+    </script>
+</body>
+</html>
