@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "影视网站",
   "main": "proxy-server.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node proxy-server.js"
   },

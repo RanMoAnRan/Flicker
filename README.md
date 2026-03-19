@@ -102,6 +102,66 @@ http://localhost:3000
 PORT=3001 npm start
 ```
 
+## 部署到 Render
+
+如果你没有自己的服务器，当前项目最省事的上线方式就是直接部署到 Render。这个项目本身就是前后端一体的单个 Node 服务，Render 会帮你从 GitHub 拉代码、安装依赖并运行 `npm start`。
+
+项目里已经补好了 [render.yaml](/Users/ranmoanran/Jing/python-space/Flicker/render.yaml)，可以直接按下面步骤操作。
+
+### 部署步骤
+
+1. 把当前仓库推送到 GitHub。
+2. 打开 Render 并登录：<https://render.com/>
+3. 在 Dashboard 中选择 `New +` -> `Blueprint`。
+4. 连接你的 GitHub 仓库，并选择当前项目。
+5. Render 会自动识别仓库中的 `render.yaml`。
+6. 确认服务配置后点击创建，等待首次构建完成。
+7. 部署成功后，Render 会分配一个 `onrender.com` 域名，直接访问即可。
+
+### 当前部署配置
+
+- 服务类型：Node Web Service
+- 构建命令：`npm install`
+- 启动命令：`npm start`
+- 健康检查：`/`
+- Node 版本：`20`
+
+### 为什么这个方案适合当前项目
+
+- 不需要额外服务器。
+- 不需要拆分前端和后端。
+- 页面文件和 `/api/proxy`、`/api/music/*` 接口都由同一个服务提供。
+- Render 原生运行时包含 `curl`，能满足当前代理和音乐插件链路。
+
+### 部署后的验证建议
+
+部署成功后，建议至少检查这几个地址：
+
+- 首页：`https://你的域名/`
+- 音乐库：`https://你的域名/music.html`
+- 插件目录接口：`https://你的域名/api/music/plugins`
+- 通用代理接口示例：`https://你的域名/api/proxy?url=https://www.baidu.com`
+
+### 常见问题
+
+#### 1. 首次打开比较慢
+
+如果你使用的是免费实例，可能会出现冷启动，第一次访问会慢一些，属于正常现象。
+
+#### 2. 音乐插件偶发失效
+
+音乐库依赖第三方插件和上游站点，某些搜索、播放或歌词异常通常不是 Render 本身的问题，而是远程插件或上游源变化导致。
+
+#### 3. 构建成功但接口异常
+
+先检查：
+
+- Render 日志里服务是否正常启动
+- 访问 [music.html](/Users/ranmoanran/Jing/python-space/Flicker/music.html) 时浏览器控制台是否有报错
+- `/api/music/plugins` 是否能正常返回 JSON
+
+如果后续你想完全固定运行环境，或者需要额外系统依赖，再把当前项目切到 Docker 部署会更稳。
+
 ## 页面说明
 
 ### 首页 `index.html`
