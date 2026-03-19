@@ -9,6 +9,7 @@
     const MEDIA_POSITION_SYNC_INTERVAL_MS = 1000;
     const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
     const EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS = 0.45;
+    const TRACK_COMPLETION_PAUSE_THRESHOLD_SECONDS = 1.2;
     const PREFETCH_AHEAD_COUNT = 4;
     const MAX_AUTO_SKIP_ATTEMPTS = 12;
 
@@ -669,6 +670,16 @@
             silentBoundary: true,
             autoSkipOnFailure: true
         });
+    }
+
+    function isNearTrackCompletion() {
+        const duration = Number(elements.playerAudio.duration);
+        const currentTime = Number(elements.playerAudio.currentTime) || 0;
+        if (!Number.isFinite(duration) || duration <= 0) {
+            return false;
+        }
+
+        return duration - currentTime <= TRACK_COMPLETION_PAUSE_THRESHOLD_SECONDS;
     }
 
     function updateLyricDialogState() {
@@ -2077,6 +2088,25 @@
         elements.playerAudio.addEventListener('pause', () => {
             if (state.isTrackTransitioning && state.desiredPlaybackState === 'playing') {
                 updateMediaSessionPlaybackState();
+                return;
+            }
+
+            if (
+                state.desiredPlaybackState === 'playing'
+                && !elements.playerAudio.ended
+                && !state.queueStepInFlight
+                && state.currentTrack
+                && state.currentQueueIndex >= 0
+                && state.currentQueueIndex < state.queue.length - 1
+                && isNearTrackCompletion()
+            ) {
+                const nextTrack = getNextQueueTrack();
+                beginTrackTransition(nextTrack);
+                persistPlayerState({ force: true });
+                void stepQueue(1, {
+                    silentBoundary: true,
+                    autoSkipOnFailure: true
+                });
                 return;
             }
 
