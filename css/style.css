@@ -4282,16 +4282,28 @@ body.music-page {
     border-radius: 22px;
 }
 
+.music-page .main-shell > .panel-card:not(.music-player-panel) {
+    padding-top: 12px;
+}
+
 .music-page .music-plugin-panel {
-    padding: 14px 14px 0;
+    padding: 12px 14px 0;
 }
 
 .music-page .section-heading {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
+}
+
+.music-page .section-heading.compact {
+    gap: 8px;
 }
 
 .music-page .music-plugin-panel .section-heading {
-    margin-bottom: 8px;
+    margin-bottom: 2px;
+}
+
+.music-page .section-heading .section-caption {
+    line-height: 1.35;
 }
 
     .music-page .section-heading h2 {
@@ -4392,8 +4404,16 @@ body.music-page {
         padding: 12px 12px 0;
     }
 
+    .music-page .main-shell > .panel-card:not(.music-player-panel) {
+        padding-top: 10px;
+    }
+
+    .music-page .section-heading.compact {
+        gap: 6px;
+    }
+
     .music-page .music-plugin-panel .section-heading {
-        margin-bottom: 6px;
+        margin-bottom: 2px;
     }
 
     .music-page .music-toplist-panel-head {

@@ -7,11 +7,11 @@
     const PLAYER_STATE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
     const PLAYER_STATE_PERSIST_INTERVAL_MS = 1500;
     const MEDIA_POSITION_SYNC_INTERVAL_MS = 1000;
+    const VISIBILITY_RESUME_GUARD_MS = 1200;
     const NEXT_TRACK_PREFETCH_THRESHOLD_SECONDS = 20;
     const EARLY_TRACK_ADVANCE_THRESHOLD_SECONDS = 0.45;
     const TRACK_COMPLETION_PAUSE_THRESHOLD_SECONDS = 1.2;
     const PREFETCH_AHEAD_COUNT = 4;
-    const MAX_AUTO_SKIP_ATTEMPTS = 12;
     const PLAY_MODES = {
         SEQUENTIAL: 'sequential',
         LOOP: 'loop',
@@ -42,6 +42,7 @@
         desiredPlaybackState: 'paused',
         queueStepInFlight: false,
         isTrackTransitioning: false,
+        visibilityResumeGuardUntil: 0,
         lastPlayerStatePersistAt: 0,
         lastMediaPositionSyncAt: 0,
         prefetchedTrackMedia: {},
@@ -624,6 +625,8 @@
             return;
         }
 
+        state.visibilityResumeGuardUntil = Date.now() + VISIBILITY_RESUME_GUARD_MS;
+
         if (state.desiredPlaybackState !== 'playing') {
             return;
         }
@@ -632,7 +635,21 @@
             return;
         }
 
-        void resumeAudioPlayback();
+        window.setTimeout(() => {
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+
+            if (state.desiredPlaybackState !== 'playing') {
+                return;
+            }
+
+            if (!state.currentTrack || !getPlayerSourceUrl() || !elements.playerAudio.paused || elements.playerAudio.ended) {
+                return;
+            }
+
+            void resumeAudioPlayback();
+        }, 120);
     }
 
     async function requestTrackMedia(track, quality) {
@@ -657,17 +674,21 @@
     }
 
     function getRandomQueueIndex(excludeIndex = -1) {
+        const excludedIndexes = Array.isArray(excludeIndex)
+            ? excludeIndex.filter(index => Number.isInteger(index))
+            : [excludeIndex].filter(index => Number.isInteger(index));
+
         if (!state.queue.length) {
             return -1;
         }
 
         if (state.queue.length === 1) {
-            return excludeIndex === 0 ? -1 : 0;
+            return excludedIndexes.includes(0) ? -1 : 0;
         }
 
         const candidates = state.queue
             .map((_, index) => index)
-            .filter(index => index !== excludeIndex);
+            .filter(index => !excludedIndexes.includes(index));
         if (candidates.length === 0) {
             return -1;
         }
@@ -720,6 +741,14 @@
 
     function getNextQueueTrack(options = {}) {
         return getQueueTrack(resolveNextQueueIndex(options));
+    }
+
+    function resolveAutoplayTarget() {
+        const nextIndex = resolveNextQueueIndex({ isAutoplay: true });
+        return {
+            nextIndex,
+            nextTrack: getQueueTrack(nextIndex)
+        };
     }
 
     function getUpcomingQueueIndexes() {
@@ -856,8 +885,8 @@
         }
 
         const currentTrack = state.currentTrack;
-        const nextTrack = getNextQueueTrack({ isAutoplay: true });
-        if (!currentTrack || !nextTrack) {
+        const { nextIndex, nextTrack } = resolveAutoplayTarget();
+        if (!currentTrack || nextIndex < 0 || !nextTrack) {
             return;
         }
 
@@ -887,7 +916,8 @@
         await stepQueue(1, {
             silentBoundary: true,
             autoSkipOnFailure: true,
-            isAutoplay: true
+            isAutoplay: true,
+            targetIndex: nextIndex
         });
     }
 
@@ -2432,18 +2462,20 @@
         try {
             const shouldAutoSkipOnFailure = Boolean(options.autoSkipOnFailure && direction > 0);
             const maxAttempts = shouldAutoSkipOnFailure
-                ? Math.min(
-                    Number.isFinite(options.maxAttempts) ? Number(options.maxAttempts) : MAX_AUTO_SKIP_ATTEMPTS,
-                    Math.max(1, state.queue.length)
+                ? Math.max(
+                    1,
+                    Number.isFinite(options.maxAttempts) ? Number(options.maxAttempts) : state.queue.length
                 )
                 : 1;
 
             let attempts = 0;
             let nextIndex = targetIndex;
             let played = false;
+            const attemptedIndexes = new Set([state.currentQueueIndex]);
 
             while (attempts < maxAttempts && nextIndex >= 0 && nextIndex < state.queue.length) {
                 const nextTrack = state.queue[nextIndex];
+                attemptedIndexes.add(nextIndex);
                 const success = await playTrack(nextTrack, nextTrack.defaultQuality, {
                     queue: state.queue,
                     queueIndex: nextIndex,
@@ -2460,6 +2492,11 @@
                 }
 
                 attempts += 1;
+                if (Boolean(options.isAutoplay) && state.playMode === PLAY_MODES.SHUFFLE) {
+                    nextIndex = getRandomQueueIndex(Array.from(attemptedIndexes));
+                    continue;
+                }
+
                 nextIndex += direction;
             }
 
@@ -2676,18 +2713,37 @@
             if (
                 state.desiredPlaybackState === 'playing'
                 && !elements.playerAudio.ended
+                && (
+                    document.visibilityState !== 'visible'
+                    || Date.now() < state.visibilityResumeGuardUntil
+                )
+            ) {
+                updateMediaSessionPlaybackState();
+                updateTransportToggleButton();
+                return;
+            }
+
+            const autoplayTarget = resolveAutoplayTarget();
+
+            if (
+                state.desiredPlaybackState === 'playing'
+                && !elements.playerAudio.ended
                 && !state.queueStepInFlight
                 && state.currentTrack
-                && resolveNextQueueIndex({ isAutoplay: true }) >= 0
+                && autoplayTarget.nextIndex >= 0
                 && isNearTrackCompletion()
             ) {
-                const nextTrack = getNextQueueTrack({ isAutoplay: true });
+                const { nextIndex, nextTrack } = autoplayTarget;
+                if (nextIndex < 0 || !nextTrack) {
+                    return;
+                }
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, {
                     silentBoundary: true,
                     autoSkipOnFailure: true,
-                    isAutoplay: true
+                    isAutoplay: true,
+                    targetIndex: nextIndex
                 });
                 return;
             }
@@ -2706,9 +2762,8 @@
                 return;
             }
 
-            const nextIndex = resolveNextQueueIndex({ isAutoplay: true });
-            if (state.currentTrack && nextIndex >= 0) {
-                const nextTrack = getQueueTrack(nextIndex);
+            const { nextIndex, nextTrack } = resolveAutoplayTarget();
+            if (state.currentTrack && nextIndex >= 0 && nextTrack) {
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, {

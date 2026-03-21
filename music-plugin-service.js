@@ -7,6 +7,7 @@ const MUSIC_PLUGIN_INDEX_URL = 'https://musicfreepluginshub.2020818.xyz/plugins.
 const PLUGIN_INDEX_TTL = 10 * 60 * 1000;
 const PLUGIN_CODE_TTL = 60 * 60 * 1000;
 const TRACK_CACHE_TTL = 10 * 60 * 1000;
+const TRACK_CACHE_STALE_FALLBACK_TTL = 24 * 60 * 60 * 1000;
 const LYRIC_CACHE_TTL = 10 * 60 * 1000;
 const QUALITY_PRIORITY = ['standard', 'high', 'low', 'super'];
 const DEFAULT_PLUGIN_REQUEST_HEADERS = {
@@ -421,14 +422,9 @@ class MusicPluginService {
 
         const track = await this.getTrackInfo(pluginName, trackId);
         const quality = pickQuality(track.raw.qualities, preferredQuality || track.normalized.defaultQuality);
-        let media = null;
-        let originalError = null;
-
-        try {
-            media = await plugin.getMediaSource(track.raw, quality);
-        } catch (error) {
-            originalError = error;
-        }
+        const primaryAttempt = await this.getMediaSourceWithPluginReload(pluginName, track.raw, quality);
+        let media = primaryAttempt.media;
+        let originalError = primaryAttempt.error;
 
         if ((!media || !media.url) && PLUGIN_MEDIA_ALIAS[pluginName]) {
             media = await this.getMediaFromAliasPlugin(PLUGIN_MEDIA_ALIAS[pluginName], track, quality);
@@ -456,8 +452,37 @@ class MusicPluginService {
         };
     }
 
+    async getMediaSourceWithPluginReload(pluginName, track, quality) {
+        let media = null;
+        let originalError = null;
+        let plugin = await this.loadPlugin(pluginName);
+
+        try {
+            media = await plugin.getMediaSource(track, quality);
+        } catch (error) {
+            originalError = error;
+        }
+
+        if (media && media.url) {
+            return { media, error: originalError };
+        }
+
+        this.invalidatePluginRuntime(pluginName);
+        plugin = await this.loadPlugin(pluginName, { forceReload: true });
+
+        try {
+            media = await plugin.getMediaSource(track, quality);
+        } catch (error) {
+            if (!originalError) {
+                originalError = error;
+            }
+        }
+
+        return { media, error: originalError };
+    }
+
     async getMediaFromAliasPlugin(aliasPluginName, track, quality) {
-        const aliasPlugin = await this.loadPlugin(aliasPluginName);
+        let aliasPlugin = await this.loadPlugin(aliasPluginName);
         let aliasTrack = track.raw;
 
         if (typeof aliasPlugin.getMusicInfo === 'function') {
@@ -475,7 +500,8 @@ class MusicPluginService {
             return null;
         }
 
-        return aliasPlugin.getMediaSource(aliasTrack, quality);
+        const response = await this.getMediaSourceWithPluginReload(aliasPluginName, aliasTrack, quality);
+        return response.media || null;
     }
 
     async getMediaFromSearchAliasPlugin(aliasPluginName, track, quality) {
@@ -497,7 +523,8 @@ class MusicPluginService {
         }
 
         const matchedQuality = pickQuality(matched.qualities, quality || 'standard');
-        return aliasPlugin.getMediaSource(matched, matchedQuality);
+        const mediaResponse = await this.getMediaSourceWithPluginReload(aliasPluginName, matched, matchedQuality);
+        return mediaResponse.media || null;
     }
 
     findSearchAliasTrack(candidates, sourceTrack) {
@@ -968,12 +995,16 @@ class MusicPluginService {
     async getTrackInfo(pluginName, trackId) {
         const cacheKey = `${pluginName}:${trackId}`;
         const cached = this.trackInfoCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now()) {
+        const now = Date.now();
+        if (cached && cached.expiresAt > now) {
             return cached.value;
         }
 
         const plugin = await this.loadPlugin(pluginName);
         if (typeof plugin.getMusicInfo !== 'function') {
+            if (cached && cached.staleUntil > now) {
+                return cached.value;
+            }
             throw createHttpError(501, `插件 ${pluginName} 不支持读取歌曲详情，请先执行搜索`, 'MUSIC_INFO_UNSUPPORTED');
         }
 
@@ -986,7 +1017,7 @@ class MusicPluginService {
             return this.storeTrackInfo(pluginName, info);
         } catch (error) {
             const fallback = this.trackInfoCache.get(cacheKey);
-            if (fallback && fallback.expiresAt > Date.now()) {
+            if (fallback && fallback.staleUntil > now) {
                 return fallback.value;
             }
 
@@ -1074,13 +1105,22 @@ class MusicPluginService {
 
         this.trackInfoCache.set(`${pluginName}:${value.normalized.id}`, {
             value,
-            expiresAt: Date.now() + TRACK_CACHE_TTL
+            expiresAt: Date.now() + TRACK_CACHE_TTL,
+            staleUntil: Date.now() + TRACK_CACHE_STALE_FALLBACK_TTL
         });
 
         return value;
     }
 
-    async loadPlugin(pluginName) {
+    invalidatePluginRuntime(pluginName) {
+        this.pluginRuntimeCache.delete(pluginName);
+    }
+
+    async loadPlugin(pluginName, options = {}) {
+        if (options.forceReload) {
+            this.invalidatePluginRuntime(pluginName);
+        }
+
         if (this.pluginRuntimeCache.has(pluginName)) {
             return this.pluginRuntimeCache.get(pluginName);
         }
