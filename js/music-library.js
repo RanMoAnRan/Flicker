@@ -1,7 +1,7 @@
 (function initMusicLibraryPage() {
     const QUEUE_DRAWER_ANIMATION_MS = 240;
     const LYRIC_DIALOG_ANIMATION_MS = 240;
-    const RECOMMENDED_PLUGIN_PRIORITY = ['网易', '小秋音乐', '小芸音乐', 'qq', 'w音乐'];
+    const RECOMMENDED_PLUGIN_PRIORITY = ['网易', '爱听', '元力 QQ', '元力 KW', '小秋音乐', '小芸音乐', 'qq', 'w音乐'];
     const PLAYER_STORAGE_KEY = 'fuguang_music_player_state';
     const PLAYER_STATE_VERSION = 1;
     const PLAYER_STATE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
@@ -12,19 +12,31 @@
     const TRACK_COMPLETION_PAUSE_THRESHOLD_SECONDS = 1.2;
     const PREFETCH_AHEAD_COUNT = 4;
     const MAX_AUTO_SKIP_ATTEMPTS = 12;
+    const PLAY_MODES = {
+        SEQUENTIAL: 'sequential',
+        LOOP: 'loop',
+        SHUFFLE: 'shuffle'
+    };
 
     const state = {
         plugins: [],
         enabledPlugins: [],
         pluginTab: 'recommended',
         activePlugin: 'all',
+        activeRecommendPlugin: '',
+        recommendTopListGroups: [],
+        activeTopListGroupKey: '',
+        activeTopListId: '',
+        activeTopListGroupTitle: '',
         currentKeyword: '',
         searchResults: [],
         resultsHydrationToken: 0,
+        recommendationRequestToken: 0,
         queue: [],
         currentQueueIndex: -1,
         currentTrack: null,
         currentQuality: '',
+        playMode: PLAY_MODES.SEQUENTIAL,
         currentLyrics: [],
         activeLyricIndex: -1,
         desiredPlaybackState: 'paused',
@@ -45,6 +57,9 @@
         pluginChips: document.getElementById('musicPluginChips'),
         resultTitle: document.getElementById('musicResultTitle'),
         resultMeta: document.getElementById('musicResultMeta'),
+        topListPanel: document.getElementById('musicTopListPanel'),
+        topListStatus: document.getElementById('musicTopListStatus'),
+        topListGroups: document.getElementById('musicTopListGroups'),
         results: document.getElementById('musicResults'),
         playerStatus: document.getElementById('musicPlayerStatus'),
         playerAudio: document.getElementById('musicAudio'),
@@ -65,7 +80,9 @@
         lyricCloseButton: document.getElementById('musicLyricCloseButton'),
         playerQualitySelect: document.getElementById('playerQualitySelect'),
         prevTrackButton: document.getElementById('prevTrackButton'),
+        stopTrackButton: document.getElementById('stopTrackButton'),
         nextTrackButton: document.getElementById('nextTrackButton'),
+        playModeButton: document.getElementById('playModeButton'),
         lyricStatus: document.getElementById('musicLyricStatus'),
         lyricBody: document.getElementById('musicLyricBody'),
         queueStatus: document.getElementById('musicQueueStatus'),
@@ -83,6 +100,16 @@
 
         const hasValue = Boolean(elements.searchInput?.value.trim());
         elements.searchClearButton.hidden = !hasValue;
+    }
+
+    function setPluginStatus(text = '') {
+        if (!elements.pluginStatus) {
+            return;
+        }
+
+        const nextText = String(text || '').trim();
+        elements.pluginStatus.textContent = nextText;
+        elements.pluginStatus.hidden = !nextText;
     }
 
     function isMobileCompactResults() {
@@ -115,6 +142,107 @@
                 return left.index - right.index;
             })
             .map(item => item.plugin);
+    }
+
+    function normalizePlayMode(mode) {
+        return Object.values(PLAY_MODES).includes(mode)
+            ? mode
+            : PLAY_MODES.SEQUENTIAL;
+    }
+
+    function getPlayModePresentation(mode = state.playMode) {
+        switch (normalizePlayMode(mode)) {
+            case PLAY_MODES.LOOP:
+                return {
+                    mode: PLAY_MODES.LOOP,
+                    label: '列表循环',
+                    icon: '↻'
+                };
+            case PLAY_MODES.SHUFFLE:
+                return {
+                    mode: PLAY_MODES.SHUFFLE,
+                    label: '随机播放',
+                    icon: '⇄'
+                };
+            default:
+                return {
+                    mode: PLAY_MODES.SEQUENTIAL,
+                    label: '顺序播放',
+                    icon: '→'
+                };
+        }
+    }
+
+    function updatePlayModeButton() {
+        if (!elements.playModeButton) {
+            return;
+        }
+
+        const presentation = getPlayModePresentation();
+        elements.playModeButton.innerHTML = `<span class="music-icon-mark" aria-hidden="true">${presentation.icon}</span>`;
+        elements.playModeButton.setAttribute('aria-label', `播放模式：${presentation.label}，点击切换`);
+        elements.playModeButton.title = `播放模式：${presentation.label}`;
+        elements.playModeButton.classList.toggle('is-active', presentation.mode !== PLAY_MODES.SEQUENTIAL);
+    }
+
+    function updateTransportToggleButton() {
+        if (!elements.stopTrackButton) {
+            return;
+        }
+
+        const hasSource = Boolean(getPlayerSourceUrl() || state.currentTrack);
+        const isPlaying = state.desiredPlaybackState === 'playing'
+            && (!elements.playerAudio.paused || state.isTrackTransitioning);
+        const icon = isPlaying ? '■' : '▶';
+        const label = isPlaying ? '停止播放' : '开始播放';
+
+        elements.stopTrackButton.innerHTML = `<span class="music-icon-mark" aria-hidden="true">${icon}</span>`;
+        elements.stopTrackButton.setAttribute('aria-label', label);
+        elements.stopTrackButton.title = label;
+        elements.stopTrackButton.classList.toggle('is-playing', isPlaying);
+        elements.stopTrackButton.disabled = !hasSource;
+    }
+
+    function cyclePlayMode() {
+        switch (state.playMode) {
+            case PLAY_MODES.SEQUENTIAL:
+                state.playMode = PLAY_MODES.LOOP;
+                break;
+            case PLAY_MODES.LOOP:
+                state.playMode = PLAY_MODES.SHUFFLE;
+                break;
+            default:
+                state.playMode = PLAY_MODES.SEQUENTIAL;
+                break;
+        }
+
+        updatePlayModeButton();
+        updateQueueActions();
+        persistPlayerState({ force: true });
+        UI.showToast(`已切换为${getPlayModePresentation().label}`, 'success');
+    }
+
+    async function toggleTransportPlayback() {
+        const isPlaying = state.desiredPlaybackState === 'playing'
+            && (!elements.playerAudio.paused || state.isTrackTransitioning);
+        if (isPlaying) {
+            stopPlayback();
+            return;
+        }
+
+        if (getPlayerSourceUrl()) {
+            const resumed = await resumeAudioPlayback({ updateStatus: true });
+            if (resumed && state.currentTrack) {
+                elements.playerStatus.textContent = `正在播放 ${state.currentTrack.title}`;
+            }
+            updateTransportToggleButton();
+            return;
+        }
+
+        if (state.currentTrack) {
+            await playTrack(state.currentTrack, state.currentQuality || state.currentTrack.defaultQuality);
+        }
+        updateTransportToggleButton();
     }
 
     function cloneTrackForStorage(track) {
@@ -206,6 +334,7 @@
             currentQueueIndex: Number.isInteger(state.currentQueueIndex) ? state.currentQueueIndex : -1,
             currentTrack: cloneTrackForStorage(state.currentTrack),
             currentQuality: state.currentQuality || '',
+            playMode: normalizePlayMode(state.playMode),
             currentTime: Number(elements.playerAudio.currentTime) || 0,
             audioSrc: getPlayerSourceUrl(),
             playbackState: state.desiredPlaybackState,
@@ -249,6 +378,7 @@
             currentQueueIndex: Number.isInteger(saved.currentQueueIndex) ? saved.currentQueueIndex : -1,
             currentTime: Number(saved.currentTime) || 0,
             currentQuality: String(saved.currentQuality || ''),
+            playMode: normalizePlayMode(saved.playMode),
             audioSrc: String(saved.audioSrc || ''),
             playbackState: saved.playbackState === 'playing' ? 'playing' : 'paused',
             activePlugin: String(saved.activePlugin || 'all'),
@@ -393,6 +523,7 @@
         state.currentQueueIndex = savedState.currentQueueIndex;
         state.currentTrack = savedState.currentTrack ? { ...savedState.currentTrack } : null;
         state.currentQuality = savedState.currentQuality || state.currentTrack?.defaultQuality || '';
+        state.playMode = normalizePlayMode(savedState.playMode);
         state.desiredPlaybackState = savedState.playbackState;
         state.activePlugin = savedState.activePlugin || state.activePlugin;
         state.currentKeyword = savedState.currentKeyword || state.currentKeyword;
@@ -406,6 +537,8 @@
         }
 
         renderQueue();
+        updatePlayModeButton();
+        updateTransportToggleButton();
 
         if (!state.currentTrack) {
             return;
@@ -523,8 +656,98 @@
         return state.queue[index] || null;
     }
 
-    function getNextQueueTrack() {
-        return getQueueTrack(state.currentQueueIndex + 1);
+    function getRandomQueueIndex(excludeIndex = -1) {
+        if (!state.queue.length) {
+            return -1;
+        }
+
+        if (state.queue.length === 1) {
+            return excludeIndex === 0 ? -1 : 0;
+        }
+
+        const candidates = state.queue
+            .map((_, index) => index)
+            .filter(index => index !== excludeIndex);
+        if (candidates.length === 0) {
+            return -1;
+        }
+
+        return candidates[Math.floor(Math.random() * candidates.length)] ?? -1;
+    }
+
+    function resolvePreviousQueueIndex() {
+        if (!state.queue.length || state.currentQueueIndex < 0) {
+            return -1;
+        }
+
+        const previousIndex = state.currentQueueIndex - 1;
+        if (previousIndex >= 0) {
+            return previousIndex;
+        }
+
+        if (state.playMode === PLAY_MODES.LOOP && state.queue.length > 0) {
+            return state.queue.length - 1;
+        }
+
+        return -1;
+    }
+
+    function resolveNextQueueIndex(options = {}) {
+        if (!state.queue.length || state.currentQueueIndex < 0) {
+            return -1;
+        }
+
+        if (state.playMode === PLAY_MODES.SHUFFLE) {
+            const randomIndex = getRandomQueueIndex(state.currentQueueIndex);
+            if (randomIndex >= 0) {
+                return randomIndex;
+            }
+
+            return -1;
+        }
+
+        const nextIndex = state.currentQueueIndex + 1;
+        if (nextIndex < state.queue.length) {
+            return nextIndex;
+        }
+
+        if (state.playMode === PLAY_MODES.LOOP && state.queue.length > 0) {
+            return 0;
+        }
+
+        return -1;
+    }
+
+    function getNextQueueTrack(options = {}) {
+        return getQueueTrack(resolveNextQueueIndex(options));
+    }
+
+    function getUpcomingQueueIndexes() {
+        if (!state.queue.length || state.currentQueueIndex < 0 || state.playMode === PLAY_MODES.SHUFFLE) {
+            return [];
+        }
+
+        const indexes = [];
+        let cursor = state.currentQueueIndex;
+
+        for (let offset = 0; offset < PREFETCH_AHEAD_COUNT; offset += 1) {
+            let nextIndex = cursor + 1;
+            if (nextIndex >= state.queue.length) {
+                if (state.playMode !== PLAY_MODES.LOOP) {
+                    break;
+                }
+                nextIndex = 0;
+            }
+
+            if (indexes.includes(nextIndex) || nextIndex === state.currentQueueIndex) {
+                break;
+            }
+
+            indexes.push(nextIndex);
+            cursor = nextIndex;
+        }
+
+        return indexes;
     }
 
     function getPrefetchedTrackMedia(track, quality) {
@@ -542,15 +765,10 @@
     }
 
     function getUpcomingRequestKeys() {
-        const keys = [];
-        for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
-            const track = getQueueTrack(state.currentQueueIndex + offset);
-            if (!track) {
-                break;
-            }
-            keys.push(getTrackRequestKey(track, track.defaultQuality));
-        }
-        return keys;
+        return getUpcomingQueueIndexes()
+            .map(index => getQueueTrack(index))
+            .filter(Boolean)
+            .map(track => getTrackRequestKey(track, track.defaultQuality));
     }
 
     function prunePrefetchedTrackMedia() {
@@ -601,14 +819,15 @@
     }
 
     function maybePrefetchNextTrack(options = {}) {
+        const upcomingIndexes = getUpcomingQueueIndexes();
+
         if (options.force) {
-            for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
-                const track = getQueueTrack(state.currentQueueIndex + offset);
-                if (!track) {
-                    break;
+            upcomingIndexes.forEach(index => {
+                const track = getQueueTrack(index);
+                if (track) {
+                    void prefetchTrackMedia(track, track.defaultQuality);
                 }
-                void prefetchTrackMedia(track, track.defaultQuality);
-            }
+            });
             return;
         }
 
@@ -623,13 +842,12 @@
             return;
         }
 
-        for (let offset = 1; offset <= PREFETCH_AHEAD_COUNT; offset += 1) {
-            const track = getQueueTrack(state.currentQueueIndex + offset);
-            if (!track) {
-                break;
+        upcomingIndexes.forEach(index => {
+            const track = getQueueTrack(index);
+            if (track) {
+                void prefetchTrackMedia(track, track.defaultQuality);
             }
-            void prefetchTrackMedia(track, track.defaultQuality);
-        }
+        });
     }
 
     async function maybeAdvanceBeforeTrackEnds() {
@@ -638,7 +856,7 @@
         }
 
         const currentTrack = state.currentTrack;
-        const nextTrack = getNextQueueTrack();
+        const nextTrack = getNextQueueTrack({ isAutoplay: true });
         if (!currentTrack || !nextTrack) {
             return;
         }
@@ -668,7 +886,8 @@
         persistPlayerState({ force: true });
         await stepQueue(1, {
             silentBoundary: true,
-            autoSkipOnFailure: true
+            autoSkipOnFailure: true,
+            isAutoplay: true
         });
     }
 
@@ -1170,13 +1389,42 @@
         `;
     }
 
+    function stopPlayback() {
+        if (!state.currentTrack && !getPlayerSourceUrl()) {
+            return;
+        }
+
+        state.isTrackTransitioning = false;
+        state.nearEndAdvanceTrackKey = '';
+        state.desiredPlaybackState = 'paused';
+        updateMediaSessionPlaybackState();
+        elements.playerAudio.pause();
+
+        try {
+            elements.playerAudio.currentTime = 0;
+        } catch (error) {
+            // 部分浏览器在媒体未就绪时会抛错，忽略即可。
+        }
+
+        markDesiredPlaybackState('paused');
+        syncMediaSessionPositionState({ force: true });
+        if (state.currentTrack) {
+            elements.playerStatus.textContent = `已停止 ${state.currentTrack.title}`;
+        } else {
+            elements.playerStatus.textContent = '播放已停止';
+        }
+        updateTransportToggleButton();
+        persistPlayerState({ force: true });
+    }
+
     function updateQueueActions() {
         const hasQueue = state.queue.length > 0 && state.currentQueueIndex >= 0;
-        const canPrev = hasQueue && state.currentQueueIndex > 0;
-        const canNext = hasQueue && state.currentQueueIndex < state.queue.length - 1;
+        const canPrev = hasQueue && resolvePreviousQueueIndex() >= 0;
+        const canNext = hasQueue && resolveNextQueueIndex() >= 0;
 
         elements.prevTrackButton.disabled = !canPrev;
         elements.nextTrackButton.disabled = !canNext;
+        updateTransportToggleButton();
         elements.clearQueueButton.disabled = state.queue.length === 0;
         if (elements.queueToggleBadge) {
             elements.queueToggleBadge.textContent = String(state.queue.length);
@@ -1549,6 +1797,8 @@
                 }
 
                 if (state.activePlugin === 'all') {
+                    resetRecommendTopLists();
+                    showBrowseHint();
                     return;
                 }
 
@@ -1677,6 +1927,253 @@
         });
     }
 
+    function setResultTitle(text = '') {
+        if (!elements.resultTitle) {
+            return;
+        }
+
+        const nextText = String(text || '').trim();
+        elements.resultTitle.textContent = nextText;
+        elements.resultTitle.hidden = !nextText;
+    }
+
+    function showBrowseHint() {
+        state.searchResults = [];
+        setResultTitle('');
+        elements.resultMeta.textContent = '“全部搜索”默认只检索推荐音乐插件；你也可以直接点某个推荐插件浏览它的榜单。';
+        UI.showEmpty(elements.results, '等待搜索或浏览榜单', '输入歌名搜索，或先从上面的推荐插件里选一个直接查看默认榜单。');
+    }
+
+    function setTopListPanelHint(text = '') {
+        if (!elements.topListStatus) {
+            return;
+        }
+
+        const nextText = String(text || '').trim();
+        elements.topListStatus.textContent = nextText || '切换分组后选择榜单，歌曲会显示在下方搜索结果区域。';
+    }
+
+    function getTopListGroupEntries() {
+        return state.recommendTopListGroups.map((group, index) => ({
+            ...group,
+            key: `toplist-group-${index}-${normalizePluginName(group?.title || 'default')}`
+        }));
+    }
+
+    function findTopListGroupEntryByTopListId(topListId) {
+        if (!topListId) {
+            return null;
+        }
+
+        return getTopListGroupEntries().find(group => (
+            Array.isArray(group.data) && group.data.some(item => item?.id === topListId)
+        )) || null;
+    }
+
+    function resolveActiveTopListGroup(options = {}) {
+        const groupEntries = getTopListGroupEntries();
+        if (groupEntries.length === 0) {
+            state.activeTopListGroupKey = '';
+            return null;
+        }
+
+        if (options.syncWithActiveTopList && state.activeTopListId) {
+            const matchedGroup = findTopListGroupEntryByTopListId(state.activeTopListId);
+            if (matchedGroup) {
+                state.activeTopListGroupKey = matchedGroup.key;
+                return matchedGroup;
+            }
+        }
+
+        const currentGroup = groupEntries.find(group => group.key === state.activeTopListGroupKey);
+        if (currentGroup) {
+            return currentGroup;
+        }
+
+        const matchedGroup = state.activeTopListId
+            ? findTopListGroupEntryByTopListId(state.activeTopListId)
+            : null;
+        if (matchedGroup) {
+            state.activeTopListGroupKey = matchedGroup.key;
+            return matchedGroup;
+        }
+
+        state.activeTopListGroupKey = groupEntries[0].key;
+        return groupEntries[0];
+    }
+
+    function resetRecommendTopLists() {
+        state.recommendationRequestToken += 1;
+        state.activeRecommendPlugin = '';
+        state.recommendTopListGroups = [];
+        state.activeTopListGroupKey = '';
+        state.activeTopListId = '';
+        state.activeTopListGroupTitle = '';
+
+        if (elements.topListPanel) {
+            elements.topListPanel.hidden = true;
+        }
+
+        if (elements.topListStatus) {
+            setTopListPanelHint();
+        }
+
+        if (elements.topListGroups) {
+            elements.topListGroups.innerHTML = '';
+        }
+    }
+
+    function renderRecommendTopLists() {
+        if (!elements.topListPanel || !elements.topListGroups) {
+            return;
+        }
+
+        if (state.currentKeyword) {
+            elements.topListPanel.hidden = true;
+            return;
+        }
+
+        if (!state.recommendTopListGroups.length || !state.activeRecommendPlugin) {
+            resetRecommendTopLists();
+            return;
+        }
+
+        const activeGroup = resolveActiveTopListGroup();
+        const groupEntries = getTopListGroupEntries();
+        const activeGroupItems = Array.isArray(activeGroup?.data) ? activeGroup.data : [];
+
+        elements.topListPanel.hidden = false;
+        elements.topListGroups.innerHTML = `
+            <div class="music-toplist-tabs" role="tablist" aria-label="榜单分组">
+                ${groupEntries.map(group => `
+                    <button
+                        type="button"
+                        class="music-toplist-tab ${group.key === activeGroup?.key ? 'active' : ''}"
+                        data-toplist-group-key="${escapeHtml(group.key)}"
+                        role="tab"
+                        aria-selected="${group.key === activeGroup?.key ? 'true' : 'false'}"
+                    >
+                        <span>${escapeHtml(group.title || '推荐榜单')}</span>
+                        <em>${escapeHtml(`${Array.isArray(group.data) ? group.data.length : 0} 个`)}</em>
+                    </button>
+                `).join('')}
+            </div>
+            <section class="music-toplist-group" data-toplist-group-key="${escapeHtml(activeGroup?.key || '')}">
+                <div class="music-toplist-group-head">
+                    <strong>${escapeHtml(activeGroup?.title || '推荐榜单')}</strong>
+                </div>
+                <div class="music-toplist-row">
+                    ${activeGroupItems.map(item => `
+                        <button
+                            type="button"
+                            class="music-toplist-chip ${item.id === state.activeTopListId ? 'active' : ''}"
+                            data-toplist-id="${escapeHtml(item.id)}"
+                            data-toplist-group="${escapeHtml(activeGroup?.title || '')}"
+                        >
+                            <span>${escapeHtml(item.title || '未命名榜单')}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </section>
+        `;
+
+        elements.topListGroups.querySelectorAll('.music-toplist-tab[data-toplist-group-key]').forEach(button => {
+            button.addEventListener('click', () => {
+                const nextGroupKey = button.dataset.toplistGroupKey || '';
+                if (!nextGroupKey || nextGroupKey === state.activeTopListGroupKey) {
+                    return;
+                }
+
+                state.activeTopListGroupKey = nextGroupKey;
+                renderRecommendTopLists();
+
+                const visibleGroup = resolveActiveTopListGroup();
+                const includesActiveTopList = Array.isArray(visibleGroup?.data)
+                    && visibleGroup.data.some(item => item?.id === state.activeTopListId);
+                if (!includesActiveTopList) {
+                    elements.resultMeta.textContent = `${visibleGroup?.title || '推荐榜单'} · 请选择下方榜单查看歌曲`;
+                }
+            });
+        });
+
+        elements.topListGroups.querySelectorAll('[data-toplist-id]').forEach(button => {
+            button.addEventListener('click', async () => {
+                const topListId = button.dataset.toplistId || '';
+                if (!topListId || topListId === state.activeTopListId) {
+                    return;
+                }
+
+                await loadRecommendationTopListDetail(state.activeRecommendPlugin, topListId, {
+                    preserveResultsOnError: true
+                });
+            });
+        });
+    }
+
+    async function loadRecommendationTopListDetail(pluginName, topListId, options = {}) {
+        if (!pluginName || !topListId) {
+            return false;
+        }
+
+        const requestToken = Number.isInteger(options.requestToken)
+            ? options.requestToken
+            : ++state.recommendationRequestToken;
+        const previousResults = state.searchResults.slice();
+        const previousTopListId = state.activeTopListId;
+        const previousGroupTitle = state.activeTopListGroupTitle;
+
+        elements.resultMeta.textContent = '正在加载榜单歌曲...';
+
+        if (!options.preserveResultsOnError) {
+            UI.showLoading(elements.results, '正在加载榜单歌曲...');
+        }
+
+        try {
+            const query = new URLSearchParams({
+                plugin: pluginName,
+                topListId
+            });
+            const payload = await fetchJson(`/api/music/recommend/detail?${query.toString()}`);
+            if (requestToken !== state.recommendationRequestToken) {
+                return false;
+            }
+            state.activeRecommendPlugin = pluginName;
+            state.activeTopListId = payload.source?.topListId || topListId;
+            state.activeTopListGroupTitle = payload.source?.groupTitle || '';
+            resolveActiveTopListGroup({ syncWithActiveTopList: true });
+            state.searchResults = payload.list || [];
+            renderRecommendTopLists();
+            renderResults(state.searchResults);
+            void hydrateSearchResultsMetadata();
+
+            const sourceTitle = payload.source?.title || '推荐榜单';
+            const sourceGroup = payload.source?.groupTitle || pluginName;
+            setResultTitle('');
+            elements.resultMeta.textContent = `${sourceGroup} · 当前榜单：${sourceTitle} · 共 ${payload.total || state.searchResults.length} 首歌曲。`;
+            setTopListPanelHint(`${sourceGroup} · 切换分组后选择榜单`);
+            return true;
+        } catch (error) {
+            if (requestToken !== state.recommendationRequestToken) {
+                return false;
+            }
+            state.activeTopListId = previousTopListId;
+            state.activeTopListGroupTitle = previousGroupTitle;
+            renderRecommendTopLists();
+
+            if (options.preserveResultsOnError && previousResults.length > 0) {
+                state.searchResults = previousResults;
+                UI.showToast(error.message || '榜单歌曲加载失败', 'error');
+                elements.resultMeta.textContent = '榜单切换失败，请稍后再试';
+                return false;
+            }
+
+            elements.resultMeta.textContent = `${pluginName} 推荐加载失败`;
+            UI.showError(elements.results, error.message || '推荐歌曲加载失败');
+            setTopListPanelHint(`${pluginName} · 榜单目录暂不可用`);
+            return false;
+        }
+    }
+
     async function loadPlugins() {
         const payload = await fetchJson('/api/music/plugins');
         state.plugins = payload.plugins || [];
@@ -1685,44 +2182,76 @@
         );
         state.activePlugin = state.enabledPlugins[0]?.name || state.plugins.find(plugin => plugin.searchable)?.name || 'all';
         syncPluginTabByActivePlugin();
-        elements.pluginStatus.textContent = state.activePlugin && state.activePlugin !== 'all'
-            ? `默认选中 ${state.activePlugin}`
-            : (state.enabledPlugins.length > 0
-                ? `默认聚合 ${state.enabledPlugins.length} 个推荐音乐插件`
-                : '当前没有推荐音乐插件');
+        setPluginStatus('');
 
         renderPluginChips();
     }
 
     async function loadPluginRecommendations(pluginName) {
         if (!pluginName || pluginName === 'all') {
+            resetRecommendTopLists();
+            showBrowseHint();
             return;
         }
 
         const plugin = state.plugins.find(item => item.name === pluginName);
         if (!plugin || !plugin.searchable) {
+            resetRecommendTopLists();
+            showBrowseHint();
             return;
         }
 
+        const requestToken = ++state.recommendationRequestToken;
         state.currentKeyword = '';
-        elements.resultTitle.textContent = `${pluginName} 推荐音乐`;
-        elements.resultMeta.textContent = `正在加载 ${pluginName} 的推荐歌曲...`;
-        UI.showLoading(elements.results, `正在载入 ${pluginName} 的推荐歌曲...`);
+        state.searchResults = [];
+        setResultTitle('');
+        elements.resultMeta.textContent = `正在加载 ${pluginName} 的推荐榜单...`;
+        UI.showLoading(elements.results, `正在载入 ${pluginName} 的推荐榜单...`);
+        state.activeRecommendPlugin = pluginName;
+        state.recommendTopListGroups = [];
+        state.activeTopListGroupKey = '';
+        state.activeTopListId = '';
+        state.activeTopListGroupTitle = '';
+
+        if (elements.topListPanel) {
+            elements.topListPanel.hidden = false;
+        }
+
+        setTopListPanelHint(`正在同步 ${pluginName} 的榜单目录...`);
+
+        if (elements.topListGroups) {
+            elements.topListGroups.innerHTML = '';
+        }
 
         try {
             const query = new URLSearchParams({
                 plugin: pluginName
             });
-            const payload = await fetchJson(`/api/music/recommend?${query.toString()}`);
-            state.searchResults = payload.list || [];
-            renderResults(state.searchResults);
-            void hydrateSearchResultsMetadata();
+            const payload = await fetchJson(`/api/music/recommend/toplists?${query.toString()}`);
+            if (requestToken !== state.recommendationRequestToken) {
+                return;
+            }
+            state.recommendTopListGroups = Array.isArray(payload.groups) ? payload.groups : [];
+            state.activeRecommendPlugin = pluginName;
+            state.activeTopListId = payload.defaultTopListId || '';
+            resolveActiveTopListGroup({ syncWithActiveTopList: true });
+            renderRecommendTopLists();
 
-            const sourceTitle = payload.source?.title || '推荐榜单';
-            const sourceGroup = payload.source?.groupTitle || pluginName;
-            elements.resultTitle.textContent = `${pluginName} 推荐音乐`;
-            elements.resultMeta.textContent = `${sourceGroup} · ${sourceTitle}，共 ${payload.total || state.searchResults.length} 首歌曲。`;
+            if (!state.activeTopListId) {
+                state.searchResults = [];
+                elements.resultMeta.textContent = `${pluginName} 暂无可用榜单`;
+                UI.showEmpty(elements.results, '暂无推荐榜单', '这个插件当前没有可展示的推荐榜单。');
+                setTopListPanelHint(`${pluginName} · 暂无可用榜单`);
+                return;
+            }
+
+            await loadRecommendationTopListDetail(pluginName, state.activeTopListId, { requestToken });
         } catch (error) {
+            if (requestToken !== state.recommendationRequestToken) {
+                return;
+            }
+            resetRecommendTopLists();
+            state.searchResults = [];
             elements.resultMeta.textContent = `${pluginName} 推荐加载失败`;
             UI.showError(elements.results, error.message || '推荐歌曲加载失败');
         }
@@ -1736,8 +2265,9 @@
             return;
         }
 
+        resetRecommendTopLists();
         state.currentKeyword = keyword;
-        elements.resultTitle.textContent = `搜索：${keyword}`;
+        setResultTitle(`搜索：${keyword}`);
         const activePlugin = state.activePlugin === 'all'
             ? null
             : state.plugins.find(plugin => plugin.name === state.activePlugin);
@@ -1761,11 +2291,28 @@
                 page: '1'
             });
             const payload = await fetchJson(`/api/music/search?${query.toString()}`);
+            const pluginStatuses = Array.isArray(payload.plugins) ? payload.plugins : [];
+            const okPlugins = pluginStatuses.filter(plugin => plugin.ok);
+            const failedPlugins = pluginStatuses.filter(plugin => !plugin.ok);
+
+            if (state.activePlugin !== 'all' && failedPlugins.length > 0 && okPlugins.length === 0) {
+                const failedPlugin = failedPlugins[0];
+                UI.showError(
+                    elements.results,
+                    failedPlugin?.error
+                        ? `${state.activePlugin} 搜索失败：${failedPlugin.error}`
+                        : `${state.activePlugin} 搜索失败`
+                );
+                elements.resultMeta.textContent = failedPlugin?.error
+                    ? `${state.activePlugin} 暂时不可用：${failedPlugin.error}`
+                    : `${state.activePlugin} 搜索失败，请稍后再试`;
+                state.searchResults = [];
+                return;
+            }
+
             state.searchResults = payload.list || [];
             renderResults(state.searchResults);
             void hydrateSearchResultsMetadata();
-
-            const okPlugins = (payload.plugins || []).filter(plugin => plugin.ok);
             elements.resultMeta.textContent = state.activePlugin === 'all'
                 ? `已搜索 ${payload.plugins?.length || 0} 个推荐插件，成功 ${okPlugins.length} 个，共找到 ${payload.total || 0} 首歌曲。`
                 : `插件 ${state.activePlugin} 搜索完成，共找到 ${payload.total || 0} 首歌曲。`;
@@ -1866,7 +2413,12 @@
             return;
         }
 
-        const targetIndex = state.currentQueueIndex + direction;
+        const targetIndex = Number.isInteger(options.targetIndex)
+            ? Number(options.targetIndex)
+            : (direction < 0
+                ? resolvePreviousQueueIndex()
+                : resolveNextQueueIndex({ isAutoplay: Boolean(options.isAutoplay) }));
+
         if (targetIndex < 0 || targetIndex >= state.queue.length) {
             if (!options.silentBoundary) {
                 UI.showToast(direction > 0 ? '已经是最后一首了' : '已经是第一首了', 'error');
@@ -1969,9 +2521,21 @@
             await stepQueue(-1);
         });
 
+        if (elements.stopTrackButton) {
+            elements.stopTrackButton.addEventListener('click', async () => {
+                await toggleTransportPlayback();
+            });
+        }
+
         elements.nextTrackButton.addEventListener('click', async () => {
             await stepQueue(1);
         });
+
+        if (elements.playModeButton) {
+            elements.playModeButton.addEventListener('click', () => {
+                cyclePlayMode();
+            });
+        }
 
         elements.clearQueueButton.addEventListener('click', () => {
             clearQueue();
@@ -2031,6 +2595,21 @@
         }
 
         document.addEventListener('keydown', event => {
+            if (event.key === ' ' || event.code === 'Space') {
+                const target = event.target;
+                const isEditable = target instanceof HTMLElement && (
+                    target.isContentEditable
+                    || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName)
+                    || Boolean(target.closest('input, textarea, select, button, [contenteditable="true"]'))
+                );
+
+                if (!isEditable && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                    event.preventDefault();
+                    void toggleTransportPlayback();
+                    return;
+                }
+            }
+
             if (event.key !== 'Escape') {
                 return;
             }
@@ -2059,6 +2638,7 @@
 
         elements.playerAudio.addEventListener('play', () => {
             markDesiredPlaybackState('playing');
+            updateTransportToggleButton();
             if (state.currentTrack) {
                 elements.playerStatus.textContent = `正在播放 ${state.currentTrack.title}`;
                 updateMediaSessionMetadata(state.currentTrack);
@@ -2068,6 +2648,7 @@
         elements.playerAudio.addEventListener('playing', () => {
             endTrackTransition();
             updateMediaSessionPlaybackState();
+            updateTransportToggleButton();
         });
 
         elements.playerAudio.addEventListener('timeupdate', () => {
@@ -2088,6 +2669,7 @@
         elements.playerAudio.addEventListener('pause', () => {
             if (state.isTrackTransitioning && state.desiredPlaybackState === 'playing') {
                 updateMediaSessionPlaybackState();
+                updateTransportToggleButton();
                 return;
             }
 
@@ -2096,16 +2678,16 @@
                 && !elements.playerAudio.ended
                 && !state.queueStepInFlight
                 && state.currentTrack
-                && state.currentQueueIndex >= 0
-                && state.currentQueueIndex < state.queue.length - 1
+                && resolveNextQueueIndex({ isAutoplay: true }) >= 0
                 && isNearTrackCompletion()
             ) {
-                const nextTrack = getNextQueueTrack();
+                const nextTrack = getNextQueueTrack({ isAutoplay: true });
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, {
                     silentBoundary: true,
-                    autoSkipOnFailure: true
+                    autoSkipOnFailure: true,
+                    isAutoplay: true
                 });
                 return;
             }
@@ -2113,6 +2695,7 @@
             if (!elements.playerAudio.ended) {
                 markDesiredPlaybackState('paused');
             }
+            updateTransportToggleButton();
             if (state.currentTrack && !elements.playerAudio.ended) {
                 elements.playerStatus.textContent = `已暂停 ${state.currentTrack.title}`;
             }
@@ -2123,18 +2706,22 @@
                 return;
             }
 
-            if (state.currentTrack && state.currentQueueIndex >= 0 && state.currentQueueIndex < state.queue.length - 1) {
-                const nextTrack = getNextQueueTrack();
+            const nextIndex = resolveNextQueueIndex({ isAutoplay: true });
+            if (state.currentTrack && nextIndex >= 0) {
+                const nextTrack = getQueueTrack(nextIndex);
                 beginTrackTransition(nextTrack);
                 persistPlayerState({ force: true });
                 void stepQueue(1, {
                     silentBoundary: true,
-                    autoSkipOnFailure: true
+                    autoSkipOnFailure: true,
+                    isAutoplay: true,
+                    targetIndex: nextIndex
                 });
                 return;
             }
 
             markDesiredPlaybackState('paused');
+            updateTransportToggleButton();
             if (state.currentTrack) {
                 elements.playerStatus.textContent = `${state.currentTrack.title} 播放完成`;
             }
@@ -2143,6 +2730,7 @@
         elements.playerAudio.addEventListener('error', () => {
             updateMediaSessionPlaybackState();
             persistPlayerState({ force: true });
+            updateTransportToggleButton();
             elements.playerStatus.textContent = '播放器遇到错误';
             UI.showToast('音频加载失败，可能是远程音源已失效', 'error');
         });
@@ -2156,7 +2744,8 @@
         syncSearchClearButtonSoon();
         updateLyricDialogState();
         updateQueueDrawerState();
-        UI.showEmpty(elements.results, '等待搜索', '输入歌名、歌手或专辑后，这里会展示可播放结果。');
+        updatePlayModeButton();
+        showBrowseHint();
         UI.showEmpty(elements.lyricBody, '等待播放', '开始播放一首歌之后，这里会自动显示并同步歌词。');
         UI.showEmpty(elements.queueList, '队列为空', '搜索结果中点击“立即播放”后，这里会保留当前队列。');
         updateQueueActions();
@@ -2168,7 +2757,7 @@
                 await loadPluginRecommendations(state.activePlugin);
             }
         } catch (error) {
-            elements.pluginStatus.textContent = error.message || '无法读取插件目录';
+            setPluginStatus(error.message || '无法读取插件目录');
             UI.showError(elements.results, error.message || '音乐插件加载失败');
         }
     }

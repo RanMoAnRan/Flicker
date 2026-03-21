@@ -35,14 +35,20 @@
     </header>
 
     <main class="main-shell">
-        <section class="container panel-card">
+        <section class="container panel-card music-plugin-panel">
             <div class="section-heading compact">
                 <div>
                     <p class="eyebrow">插件来源</p>
                 </div>
-                <span class="section-caption" id="musicPluginStatus">正在同步插件状态</span>
+                <span class="section-caption" id="musicPluginStatus" hidden></span>
             </div>
             <div class="music-plugin-chips" id="musicPluginChips"></div>
+            <div class="music-toplist-panel" id="musicTopListPanel" hidden>
+                <div class="music-toplist-panel-head">
+                    <p class="music-toplist-status" id="musicTopListStatus">切换分组后选择榜单，歌曲会显示在下方搜索结果区域。</p>
+                </div>
+                <div class="music-toplist-groups" id="musicTopListGroups"></div>
+            </div>
         </section>
 
         <section class="container panel-card">
@@ -75,16 +81,30 @@
                 </div>
                 <div class="music-player-controls">
                     <div class="music-player-actions-row">
-                        <div class="music-quality-row">
-                            <label for="playerQualitySelect">音质</label>
-                            <select id="playerQualitySelect"></select>
+                        <div class="music-player-primary-actions">
+                            <button type="button" class="music-player-icon-btn" id="prevTrackButton" aria-label="上一首" title="上一首">
+                                <span class="music-icon-mark" aria-hidden="true">&#9664;</span>
+                            </button>
+                            <button type="button" class="music-player-icon-btn music-player-stop-btn" id="stopTrackButton" aria-label="停止播放" title="停止播放">
+                                <span class="music-icon-mark" aria-hidden="true">&#9632;</span>
+                            </button>
+                            <button type="button" class="music-player-icon-btn" id="nextTrackButton" aria-label="下一首" title="下一首">
+                                <span class="music-icon-mark" aria-hidden="true">&#9654;</span>
+                            </button>
+                            <button type="button" class="music-player-icon-btn music-player-mode-btn" id="playModeButton" aria-label="播放模式：顺序播放" title="播放模式：顺序播放">
+                                <span class="music-icon-mark" aria-hidden="true">&#8594;</span>
+                            </button>
                         </div>
-                        <button type="button" class="btn-secondary" id="prevTrackButton">上一首</button>
-                        <button type="button" class="btn-secondary" id="nextTrackButton">下一首</button>
-                        <button type="button" class="btn-secondary music-queue-toggle" id="musicQueueToggleButton" aria-controls="musicQueueOverlay" aria-expanded="false">
-                            <span>播放队列</span>
-                            <em id="musicQueueToggleBadge">0</em>
-                        </button>
+                        <div class="music-player-secondary-actions">
+                            <div class="music-quality-row">
+                                <label for="playerQualitySelect">音质</label>
+                                <select id="playerQualitySelect"></select>
+                            </div>
+                            <button type="button" class="btn-secondary music-queue-toggle" id="musicQueueToggleButton" aria-controls="musicQueueOverlay" aria-expanded="false">
+                                <span>播放队列</span>
+                                <em id="musicQueueToggleBadge">0</em>
+                            </button>
+                        </div>
                     </div>
                     <audio id="musicAudio" controls preload="metadata"></audio>
                 </div>

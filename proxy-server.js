@@ -299,6 +299,21 @@ async function handleMusicApi(req, res) {
             return;
         }
 
+        if (requestUrl.pathname === '/api/music/recommend/toplists') {
+            sendJson(res, 200, await musicPluginService.getRecommendationTopLists({
+                plugin: requestUrl.searchParams.get('plugin') || ''
+            }));
+            return;
+        }
+
+        if (requestUrl.pathname === '/api/music/recommend/detail') {
+            sendJson(res, 200, await musicPluginService.getRecommendationTopListDetail({
+                plugin: requestUrl.searchParams.get('plugin') || '',
+                topListId: requestUrl.searchParams.get('topListId') || requestUrl.searchParams.get('top_list_id') || ''
+            }));
+            return;
+        }
+
         if (requestUrl.pathname === '/api/music/media') {
             sendJson(res, 200, await musicPluginService.getMedia({
                 plugin: requestUrl.searchParams.get('plugin') || '',

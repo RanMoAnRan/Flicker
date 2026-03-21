@@ -1,6 +1,7 @@
 const path = require('path');
 const vm = require('vm');
 const { execFile } = require('child_process');
+const { URL } = require('url');
 
 const MUSIC_PLUGIN_INDEX_URL = 'https://musicfreepluginshub.2020818.xyz/plugins.json';
 const PLUGIN_INDEX_TTL = 10 * 60 * 1000;
@@ -8,7 +9,42 @@ const PLUGIN_CODE_TTL = 60 * 60 * 1000;
 const TRACK_CACHE_TTL = 10 * 60 * 1000;
 const LYRIC_CACHE_TTL = 10 * 60 * 1000;
 const QUALITY_PRIORITY = ['standard', 'high', 'low', 'super'];
+const DEFAULT_PLUGIN_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    Connection: 'keep-alive'
+};
+const MANUAL_PLUGIN_CATALOG = [
+    {
+        name: '爱听',
+        version: 'manual',
+        url: 'https://gitee.com/kevinr/tvbox/raw/master/musicfree/plugins/at.js'
+    },
+    {
+        name: '元力 KW',
+        version: 'manual',
+        url: 'http://music.haitangw.net/cqapi/kw.js'
+    },
+    {
+        name: '元力 QQ',
+        version: 'manual',
+        url: 'http://music.haitangw.net/cqapi/qq.js'
+    }
+];
 const PLUGIN_ALLOWLIST = {
+    爱听: {
+        defaultQuality: 'standard',
+        note: '已手工接入推荐目录，支持搜索、播放、歌词与推荐榜单'
+    },
+    '元力 KW': {
+        defaultQuality: 'standard',
+        note: '已手工接入推荐目录，目标用于酷我链路搜索与播放'
+    },
+    '元力 QQ': {
+        defaultQuality: 'standard',
+        note: '已手工接入推荐目录，目标用于 QQ 链路搜索与播放'
+    },
     W音乐: {
         defaultQuality: 'standard',
         note: '首批推荐插件'
@@ -101,6 +137,44 @@ function normalizeArtwork(value) {
         return `https:${source}`;
     }
     return source;
+}
+
+function pickFirstText(...values) {
+    for (const value of values) {
+        const normalized = normalizeText(value);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return '';
+}
+
+function splitCombinedTrackText(text = '') {
+    const normalized = normalizeText(text);
+    if (!normalized) {
+        return null;
+    }
+
+    const separators = [' - ', ' — ', ' – ', ' / ', '_', '-'];
+
+    for (const separator of separators) {
+        if (!normalized.includes(separator)) {
+            continue;
+        }
+
+        const parts = normalized.split(separator).map(item => normalizeText(item)).filter(Boolean);
+        if (parts.length < 2) {
+            continue;
+        }
+
+        return {
+            artist: parts[0],
+            title: parts.slice(1).join(' ')
+        };
+    }
+
+    return null;
 }
 
 function hasUsableLyricContent(lyric = {}) {
@@ -196,6 +270,45 @@ function getPluginKindLabel(kind) {
     };
 
     return map[kind] || map.unknown;
+}
+
+function normalizeTopListGroups(topLists, options = {}) {
+    const includeRaw = Boolean(options.includeRaw);
+    const source = Array.isArray(topLists) ? topLists : [];
+    const hasGroupedShape = source.some(group => Array.isArray(group?.data));
+    const groupedSource = hasGroupedShape
+        ? source
+        : [{ title: '推荐榜单', data: source }];
+
+    return groupedSource
+        .map(group => {
+            const groupTitle = normalizeText(group?.title || '推荐榜单');
+            const data = Array.isArray(group?.data)
+                ? group.data
+                    .filter(item => item && item.id != null)
+                    .map(item => {
+                        const normalizedItem = {
+                            id: String(item.id),
+                            title: normalizeText(item.title || '未命名榜单'),
+                            description: normalizeText(item.description || ''),
+                            coverImg: normalizeArtwork(item.coverImg || item.artwork || ''),
+                            groupTitle
+                        };
+
+                        if (includeRaw) {
+                            normalizedItem.raw = item;
+                        }
+
+                        return normalizedItem;
+                    })
+                : [];
+
+            return {
+                title: groupTitle,
+                data
+            };
+        })
+        .filter(group => group.data.length > 0);
 }
 
 class MusicPluginService {
@@ -652,6 +765,10 @@ class MusicPluginService {
     }
 
     async getRecommendations(params = {}) {
+        return this.getRecommendationTopListDetail(params);
+    }
+
+    async getRecommendationTopLists(params = {}) {
         const pluginName = normalizeText(params.plugin);
         if (!pluginName || pluginName === 'all') {
             throw createHttpError(400, '推荐歌曲需要指定插件', 'MUSIC_RECOMMEND_PLUGIN_REQUIRED');
@@ -663,7 +780,7 @@ class MusicPluginService {
         }
 
         const topLists = await plugin.getTopLists();
-        const groups = Array.isArray(topLists) ? topLists : [];
+        const groups = normalizeTopListGroups(topLists);
         const firstGroup = groups.find(group => Array.isArray(group?.data) && group.data.length > 0);
         const firstItem = firstGroup?.data?.find(Boolean);
 
@@ -671,7 +788,48 @@ class MusicPluginService {
             throw createHttpError(404, `插件 ${pluginName} 暂无可用推荐榜单`, 'MUSIC_RECOMMEND_EMPTY');
         }
 
-        const detail = await plugin.getTopListDetail(firstItem);
+        return {
+            plugin: pluginName,
+            defaultTopListId: String(firstItem.id),
+            groups: groups.map(group => ({
+                title: group.title,
+                data: group.data.map(item => ({
+                    id: item.id,
+                    title: item.title,
+                    description: item.description,
+                    coverImg: item.coverImg
+                }))
+            }))
+        };
+    }
+
+    async getRecommendationTopListDetail(params = {}) {
+        const pluginName = normalizeText(params.plugin);
+        const requestedTopListId = normalizeText(params.topListId || params.top_list_id);
+        if (!pluginName || pluginName === 'all') {
+            throw createHttpError(400, '推荐歌曲需要指定插件', 'MUSIC_RECOMMEND_PLUGIN_REQUIRED');
+        }
+
+        const plugin = await this.loadPlugin(pluginName);
+        if (typeof plugin.getTopLists !== 'function' || typeof plugin.getTopListDetail !== 'function') {
+            throw createHttpError(501, `插件 ${pluginName} 暂不支持推荐歌曲`, 'MUSIC_RECOMMEND_UNSUPPORTED');
+        }
+
+        const topLists = await plugin.getTopLists();
+        const groups = normalizeTopListGroups(topLists, { includeRaw: true });
+        const firstGroup = groups.find(group => Array.isArray(group?.data) && group.data.length > 0);
+        const firstItem = firstGroup?.data?.find(Boolean);
+        const selected = requestedTopListId
+            ? groups
+                .flatMap(group => group.data || [])
+                .find(item => String(item.id) === requestedTopListId)
+            : (firstItem ? { ...firstItem, groupTitle: firstGroup?.title || '推荐榜单' } : null);
+
+        if (!selected) {
+            throw createHttpError(404, `插件 ${pluginName} 暂无可用推荐榜单`, 'MUSIC_RECOMMEND_EMPTY');
+        }
+
+        const detail = await plugin.getTopListDetail(selected.raw || selected);
         const rawList = Array.isArray(detail?.musicList) ? detail.musicList : [];
         const list = rawList
             .filter(item => item && item.id)
@@ -684,10 +842,11 @@ class MusicPluginService {
         return {
             plugin: pluginName,
             source: {
-                groupTitle: normalizeText(firstGroup?.title || '推荐榜单'),
-                title: normalizeText(firstItem.title || '热门推荐'),
-                description: normalizeText(firstItem.description || detail?.description || ''),
-                coverImg: normalizeArtwork(firstItem.coverImg || firstItem.artwork || detail?.coverImg || '')
+                groupTitle: normalizeText(selected.groupTitle || '推荐榜单'),
+                title: normalizeText(selected.title || '热门推荐'),
+                description: normalizeText(selected.description || detail?.description || ''),
+                coverImg: normalizeArtwork(selected.coverImg || detail?.coverImg || ''),
+                topListId: String(selected.id)
             },
             total: list.length,
             list
@@ -711,10 +870,29 @@ class MusicPluginService {
             ttl: PLUGIN_INDEX_TTL,
             cacheKey: 'plugin-index'
         });
-        const plugins = Array.isArray(payload?.plugins)
+        const remotePlugins = Array.isArray(payload?.plugins)
             ? payload.plugins.filter(item => !PLUGIN_REMOVE_BLOCKLIST[item?.name])
             : [];
-        const catalog = plugins.map(item => {
+        const mergedPlugins = new Map();
+
+        remotePlugins.forEach(item => {
+            if (!item?.name) {
+                return;
+            }
+            mergedPlugins.set(item.name, item);
+        });
+
+        MANUAL_PLUGIN_CATALOG.forEach(item => {
+            if (!item?.name || !item?.url) {
+                return;
+            }
+            mergedPlugins.set(item.name, {
+                ...mergedPlugins.get(item.name),
+                ...item
+            });
+        });
+
+        const catalog = Array.from(mergedPlugins.values()).map(item => {
             const allowlistItem = PLUGIN_ALLOWLIST[item.name];
             const kind = inferPluginKind(item.name, item.url || '');
             const recommended = Boolean(allowlistItem);
@@ -826,12 +1004,55 @@ class MusicPluginService {
         const qualityMap = item?.qualities || {};
         const qualityKeys = Object.keys(qualityMap);
         const playbackRestriction = getPluginPlaybackRestriction(pluginName);
+        const title = pickFirstText(
+            item?.title,
+            item?.name,
+            item?.songName,
+            item?.songname,
+            item?.musicName,
+            item?.musicname,
+            item?.trackName,
+            item?.trackname,
+            item?.songTitle,
+            item?.songtitle,
+            item?.raw?.title,
+            item?.raw?.name
+        ) || '未命名歌曲';
+        const artist = pickFirstText(
+            item?.artist,
+            item?.singer,
+            item?.author,
+            item?.subtitle,
+            item?.artists,
+            item?.artistName,
+            item?.artistname,
+            item?.raw?.artist,
+            item?.raw?.singer
+        ) || '未知歌手';
+        const album = pickFirstText(
+            item?.album,
+            item?.albumName,
+            item?.albumname,
+            item?.collection,
+            item?.raw?.album
+        );
+        let resolvedTitle = title;
+        let resolvedArtist = artist;
+
+        if (pluginName === '爱听' && resolvedTitle === '未命名歌曲') {
+            const combined = splitCombinedTrackText(resolvedArtist);
+            if (combined?.title) {
+                resolvedTitle = combined.title;
+                resolvedArtist = combined.artist || resolvedArtist;
+            }
+        }
+
         return {
             id: String(item.id || ''),
             plugin: pluginName,
-            title: normalizeText(item.title || item.name || '未命名歌曲'),
-            artist: normalizeText(item.artist || '未知歌手'),
-            album: normalizeText(item.album || ''),
+            title: resolvedTitle,
+            artist: resolvedArtist,
+            album,
             artwork: normalizeArtwork(item.artwork),
             duration: Number(item.duration) || 0,
             durationText: formatDuration(item.duration),
@@ -1087,7 +1308,7 @@ class MusicPluginService {
             url,
             method: 'GET',
             headers: {
-                Accept: 'application/json, text/plain, */*'
+                ...DEFAULT_PLUGIN_REQUEST_HEADERS
             },
             timeoutSeconds: 25
         });
@@ -1113,6 +1334,19 @@ class MusicPluginService {
         }
 
         const urlObject = new URL(targetUrl);
+        const mergedHeaders = {
+            ...DEFAULT_PLUGIN_REQUEST_HEADERS,
+            ...(config.headers || {})
+        };
+
+        if (!mergedHeaders.Referer) {
+            mergedHeaders.Referer = `${urlObject.protocol}//${urlObject.host}/`;
+        }
+
+        if (!mergedHeaders.Origin && /^https?:$/i.test(urlObject.protocol)) {
+            mergedHeaders.Origin = `${urlObject.protocol}//${urlObject.host}`;
+        }
+
         const params = config.params || {};
         Object.entries(params).forEach(([key, value]) => {
             if (value === undefined || value === null || value === '') {
@@ -1135,7 +1369,7 @@ class MusicPluginService {
             curlArgs.push('--proxy', this.systemProxyUrl);
         }
 
-        Object.entries(config.headers || {}).forEach(([key, value]) => {
+        Object.entries(mergedHeaders).forEach(([key, value]) => {
             if (value === undefined || value === null || value === '') {
                 return;
             }
