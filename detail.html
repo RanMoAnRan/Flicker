@@ -143,7 +143,18 @@
             if (video?.kind === 'art' || !video?.vod_play_from || !video?.vod_play_url) {
                 return [];
             }
-            return VideoParser.sortSourcesByM3u8(VideoParser.parsePlaySources(video.vod_play_from, video.vod_play_url));
+            const parsedSources = VideoParser.sortSourcesByM3u8(
+                VideoParser.parsePlaySources(video.vod_play_from, video.vod_play_url)
+            );
+            const visibleSources = parsedSources.filter(source => !shouldHidePlaySource(source));
+            return visibleSources.length > 0 ? visibleSources : parsedSources;
+        }
+
+        function shouldHidePlaySource(source) {
+            const normalizedName = String(source?.name || '')
+                .replace(/\s+/g, '')
+                .toLowerCase();
+            return normalizedName.includes('dbm3u8');
         }
 
         function renderDetail() {
@@ -279,7 +290,6 @@
             document.getElementById('sourceTabs').innerHTML = playSources.map((source, index) => `
                 <button class="source-tab ${index === currentSourceIndex ? 'active' : ''}" onclick="selectSource(${index})">
                     <span>${escapeHtml(source.name)}</span>
-                    ${source.isM3u8 ? '<em>M3U8</em>' : '<em>线路</em>'}
                 </button>
             `).join('');
         }
@@ -304,7 +314,6 @@
             grid.innerHTML = source.episodes.map((episode, index) => `
                 <button class="episode-btn ${index === 0 ? 'active' : ''}" onclick="playEpisode(${sourceIndex}, ${index})">
                     <span>${escapeHtml(episode.name)}</span>
-                    <em>${index === 0 ? '推荐' : '播放'}</em>
                 </button>
             `).join('');
         }

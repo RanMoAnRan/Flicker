@@ -145,6 +145,57 @@
             .map(item => item.plugin);
     }
 
+    function sanitizeDownloadPart(value) {
+        return String(value || '')
+            .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function inferDownloadExtensionFromContentType(contentType = '') {
+        const normalized = String(contentType || '').toLowerCase();
+        if (normalized.includes('audio/flac')) {
+            return '.flac';
+        }
+        if (normalized.includes('audio/mp4') || normalized.includes('audio/x-m4a')) {
+            return '.m4a';
+        }
+        if (normalized.includes('audio/ogg')) {
+            return '.ogg';
+        }
+        if (normalized.includes('audio/wav') || normalized.includes('audio/wave')) {
+            return '.wav';
+        }
+        if (normalized.includes('audio/aac')) {
+            return '.aac';
+        }
+        if (normalized.includes('audio/x-ms-wma')) {
+            return '.wma';
+        }
+        return '.mp3';
+    }
+
+    function parseDownloadFilename(disposition = '') {
+        const text = String(disposition || '');
+        const encoded = text.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+        if (encoded) {
+            try {
+                return decodeURIComponent(encoded);
+            } catch (error) {
+                return encoded;
+            }
+        }
+
+        const plain = text.match(/filename="?([^";]+)"?/i)?.[1];
+        return plain ? plain.trim() : '';
+    }
+
+    function buildTrackDownloadFilename(track, contentType = '') {
+        const title = sanitizeDownloadPart(track?.title) || '未命名歌曲';
+        const artist = sanitizeDownloadPart(track?.artist) || sanitizeDownloadPart(track?.plugin) || '未知歌手';
+        return `${title} - ${artist}${inferDownloadExtensionFromContentType(contentType)}`;
+    }
+
     function normalizePlayMode(mode) {
         return Object.values(PLAY_MODES).includes(mode)
             ? mode
@@ -663,6 +714,70 @@
             mediaTrack: mergeTrackData(track, payload.track || track),
             media: payload.media || {}
         };
+    }
+
+    async function downloadTrack(track, quality, button) {
+        if (!track || track.playable === false) {
+            UI.showToast(track?.playableReason || `${track?.plugin || '当前插件'} 暂不支持下载`, 'error');
+            return;
+        }
+
+        const query = new URLSearchParams({
+            plugin: track.plugin,
+            id: track.id,
+            quality: quality || track.defaultQuality
+        });
+        const originalContent = button ? button.innerHTML : '';
+
+        if (button) {
+            button.disabled = true;
+            button.classList.add('is-loading');
+            button.innerHTML = '<span aria-hidden="true">…</span>';
+        }
+
+        try {
+            const response = await fetch(`/api/music/download?${query.toString()}`);
+            if (!response.ok) {
+                let message = '下载失败，请稍后再试';
+                try {
+                    const payload = await response.json();
+                    message = payload?.error || message;
+                } catch (error) {
+                    const text = await response.text();
+                    if (text) {
+                        message = text;
+                    }
+                }
+                throw new Error(message);
+            }
+
+            const blob = await response.blob();
+            const contentType = response.headers.get('content-type') || blob.type || '';
+            const filename = parseDownloadFilename(response.headers.get('content-disposition'))
+                || buildTrackDownloadFilename(track, contentType);
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+
+            window.setTimeout(() => {
+                URL.revokeObjectURL(objectUrl);
+            }, 1000);
+
+            UI.showToast(`开始下载：${track.title}`, 'success');
+        } catch (error) {
+            UI.showToast(error.message || '下载失败，请稍后再试', 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.classList.remove('is-loading');
+                button.innerHTML = originalContent;
+            }
+        }
     }
 
     function getQueueTrack(index) {
@@ -1456,6 +1571,10 @@
         elements.nextTrackButton.disabled = !canNext;
         updateTransportToggleButton();
         elements.clearQueueButton.disabled = state.queue.length === 0;
+        if (elements.queueToggleButton) {
+            elements.queueToggleButton.setAttribute('aria-label', `播放队列，当前 ${state.queue.length} 首`);
+            elements.queueToggleButton.title = `播放队列（${state.queue.length} 首）`;
+        }
         if (elements.queueToggleBadge) {
             elements.queueToggleBadge.textContent = String(state.queue.length);
         }

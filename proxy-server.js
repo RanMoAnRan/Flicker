@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const { createMusicPluginService } = require('./music-plugin-service');
 
 const PORT = process.env.PORT || 3000;
@@ -19,6 +19,16 @@ const MIME_TYPES = {
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon'
+};
+
+const DOWNLOAD_MIME_TYPES = {
+    '.aac': 'audio/aac',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.mp3': 'audio/mpeg',
+    '.ogg': 'audio/ogg',
+    '.wav': 'audio/wav',
+    '.wma': 'audio/x-ms-wma'
 };
 
 function getSystemProxyUrl() {
@@ -68,18 +78,17 @@ process.on('uncaughtException', error => {
     console.error('[server] 捕获到未处理异常，服务将继续运行:', error);
 });
 
-function requestViaCurl(targetUrl) {
+function buildCurlArgs(targetUrl, options = {}) {
     const curlArgs = [
         '-L',
         '-sS',
         '--globoff',
-        '--max-time', '20',
+        '--max-time', Number.isFinite(options.maxTimeSeconds) ? String(options.maxTimeSeconds) : '20',
         '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        '-H', 'Accept: application/json, text/plain, */*',
+        '-H', options.accept || 'Accept: application/json, text/plain, */*',
         '-H', 'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
         '-H', 'Cache-Control: no-cache',
         '-H', `Referer: ${targetUrl.protocol}//${targetUrl.host}`,
-        '-w', '\n__FG_STATUS__:%{http_code}\n__FG_CONTENT_TYPE__:%{content_type}\n',
         targetUrl.toString()
     ];
 
@@ -87,6 +96,17 @@ function requestViaCurl(targetUrl) {
         curlArgs.unshift(SYSTEM_PROXY_URL);
         curlArgs.unshift('--proxy');
     }
+
+    return curlArgs;
+}
+
+function requestViaCurl(targetUrl) {
+    const baseArgs = buildCurlArgs(targetUrl);
+    const curlArgs = [
+        ...baseArgs.slice(0, -1),
+        '-w', '\n__FG_STATUS__:%{http_code}\n__FG_CONTENT_TYPE__:%{content_type}\n',
+        baseArgs[baseArgs.length - 1]
+    ];
 
     return new Promise((resolve, reject) => {
         execFile('curl', curlArgs, {
@@ -130,6 +150,157 @@ function sendJson(res, statusCode, data) {
         'Access-Control-Allow-Origin': '*'
     });
     res.end(JSON.stringify(data));
+}
+
+function sanitizeDownloadName(value) {
+    return String(value || '')
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function inferDownloadExtension(rawUrl) {
+    try {
+        const parsed = new URL(String(rawUrl || ''));
+        const ext = path.extname(parsed.pathname || '').toLowerCase();
+        if (ext && /^[.a-z0-9]{2,8}$/i.test(ext)) {
+            return ext;
+        }
+    } catch (error) {
+        return '.mp3';
+    }
+
+    return '.mp3';
+}
+
+function buildAttachmentFilename(track = {}, mediaUrl = '') {
+    const extension = inferDownloadExtension(mediaUrl);
+    const title = sanitizeDownloadName(track.title) || '未命名歌曲';
+    const artist = sanitizeDownloadName(track.artist) || sanitizeDownloadName(track.plugin) || '未知歌手';
+    return `${title} - ${artist}${extension}`;
+}
+
+function buildContentDisposition(filename) {
+    const safeFilename = String(filename || 'track.mp3');
+    const fallback = safeFilename
+        .replace(/[^\x20-\x7e]/g, '_')
+        .replace(/["\\]/g, '_');
+    return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
+}
+
+async function handleMusicDownload(req, res) {
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+    const plugin = requestUrl.searchParams.get('plugin') || '';
+    const id = requestUrl.searchParams.get('id') || '';
+    const quality = requestUrl.searchParams.get('quality') || '';
+
+    if (!plugin || !id) {
+        sendJson(res, 400, { error: '缺少下载参数' });
+        return;
+    }
+
+    try {
+        const payload = await musicPluginService.getMedia({ plugin, id, quality });
+        const mediaUrl = String(payload?.media?.url || '').trim();
+        if (!mediaUrl) {
+            sendJson(res, 404, { error: '当前歌曲没有可下载的音频地址' });
+            return;
+        }
+
+        const parsedMediaUrl = new URL(mediaUrl);
+        const extension = inferDownloadExtension(mediaUrl);
+        const contentType = DOWNLOAD_MIME_TYPES[extension] || 'application/octet-stream';
+        const filename = buildAttachmentFilename(payload?.track || {}, mediaUrl);
+        const child = spawn('curl', buildCurlArgs(parsedMediaUrl, {
+            accept: 'Accept: */*',
+            maxTimeSeconds: 0
+        }), {
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+
+        let responseStarted = false;
+        let stderr = '';
+
+        const cleanup = () => {
+            if (!child.killed) {
+                child.kill('SIGTERM');
+            }
+        };
+
+        res.on('close', cleanup);
+
+        child.on('error', error => {
+            res.off('close', cleanup);
+            if (responseStarted) {
+                res.destroy(error);
+                return;
+            }
+
+            sendJson(res, 502, {
+                error: '下载进程启动失败',
+                details: error.message
+            });
+        });
+
+        child.stderr.on('data', chunk => {
+            stderr += chunk.toString('utf8');
+        });
+
+        child.stdout.on('data', chunk => {
+            if (!responseStarted) {
+                responseStarted = true;
+                setNoCacheHeaders(res);
+                res.writeHead(200, {
+                    'Access-Control-Allow-Origin': '*',
+                    'Content-Type': contentType,
+                    'Content-Disposition': buildContentDisposition(filename)
+                });
+            }
+
+            res.write(chunk);
+        });
+
+        child.stdout.on('end', () => {
+            if (responseStarted && !res.writableEnded) {
+                res.end();
+            }
+        });
+
+        child.on('close', code => {
+            res.off('close', cleanup);
+            if (code !== 0) {
+                const details = stderr.trim() || '上游音频下载失败';
+                console.error('[server] 音乐下载失败:', details);
+                if (!responseStarted) {
+                    sendJson(res, 502, {
+                        error: '下载歌曲失败',
+                        details
+                    });
+                    return;
+                }
+
+                res.destroy(new Error(details));
+                return;
+            }
+
+            if (!responseStarted) {
+                setNoCacheHeaders(res);
+                res.writeHead(200, {
+                    'Access-Control-Allow-Origin': '*',
+                    'Content-Type': contentType,
+                    'Content-Disposition': buildContentDisposition(filename)
+                });
+                res.end();
+            }
+        });
+    } catch (error) {
+        sendJson(res, error.statusCode || 500, {
+            error: error.message || '下载歌曲失败',
+            error_code: error.code || 'MUSIC_DOWNLOAD_FAILED',
+            details: error.details || '',
+            upstream: error.upstream || ''
+        });
+    }
 }
 
 function mapProxyError(error) {
@@ -320,6 +491,11 @@ async function handleMusicApi(req, res) {
                 id: requestUrl.searchParams.get('id') || '',
                 quality: requestUrl.searchParams.get('quality') || ''
             }));
+            return;
+        }
+
+        if (requestUrl.pathname === '/api/music/download') {
+            await handleMusicDownload(req, res);
             return;
         }
 

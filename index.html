@@ -53,7 +53,6 @@
                     <div class="section-heading compact">
                         <div>
                             <p class="eyebrow">今日焦点</p>
-                            <h2>快速入口</h2>
                         </div>
                         <span class="section-caption" id="heroSourceLabel">片源待命</span>
                     </div>
@@ -66,7 +65,7 @@
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">片库导航</p>
-                    <h2 id="sectionTitle">最新影视</h2>
+                    <h2 id="sectionTitle" hidden>最新影视</h2>
                     <p class="section-caption" id="sectionMeta">正在载入当前片源的影片目录。</p>
                 </div>
                 <div class="section-tools" id="sourceSummary"></div>
@@ -83,7 +82,6 @@
             <div class="section-heading compact">
                 <div>
                     <p class="eyebrow">精选片单</p>
-                    <h2>近期焦点</h2>
                 </div>
                 <span class="section-caption" id="resultsMeta">正在更新推荐条目</span>
             </div>
@@ -94,7 +92,6 @@
             <div class="section-heading compact">
                 <div>
                     <p class="eyebrow">片库瀑布</p>
-                    <h2>本页内容</h2>
                 </div>
                 <span class="section-caption" id="catalogHint">按分类、状态和关键词组合筛选当前片单。</span>
             </div>
@@ -510,6 +507,7 @@
         }
 
         function renderHeroFallback(title, description) {
+            document.getElementById('heroShowcase').classList.remove('is-stack-mode');
             document.getElementById('heroShowcase').innerHTML = `
                 <div class="hero-fallback">
                     <p class="eyebrow">${escapeHtml(
@@ -525,36 +523,82 @@
         }
 
         function renderHeroShowcase(videos, kind = currentSourceKind) {
-            const primaryVideo = videos[0];
-            const secondaryVideos = videos.slice(1, 5);
-            const badges = VideoMeta.getStatusBadges(primaryVideo).map(item => UI.renderBadge(item.label, item.tone)).join('');
+            const HERO_STACK_MAX_ITEMS = 6;
             const copy = kind === 'art'
                 ? { heroEyebrow: '浮光资讯精选', heroAction: '阅读全文', heroBrowse: '继续浏览' }
                 : { heroEyebrow: '浮光片库精选', heroAction: '查看详情', heroBrowse: '继续翻片' };
-            const thirdMeta = kind === 'art'
-                ? (primaryVideo.art_author || primaryVideo.art_from || '资讯内容')
-                : VideoMeta.getPrimarySourceLabel(primaryVideo);
+            const showcaseVideos = videos.slice(0, HERO_STACK_MAX_ITEMS);
+            const primaryVideo = showcaseVideos[0];
+            const badges = VideoMeta.getStatusBadges(primaryVideo).map(item => UI.renderBadge(item.label, item.tone)).join('');
+            const sideFallbackVideos = videos.slice(1, 5);
+            const secondaryVideos = videos.slice(HERO_STACK_MAX_ITEMS, HERO_STACK_MAX_ITEMS + 4).length > 0
+                ? videos.slice(HERO_STACK_MAX_ITEMS, HERO_STACK_MAX_ITEMS + 4)
+                : sideFallbackVideos;
+            const stackCardWidth = showcaseVideos.length >= 6 ? 25 : 30;
+            const stackStep = showcaseVideos.length > 1
+                ? Number(((100 - stackCardWidth) / (showcaseVideos.length - 1)).toFixed(4))
+                : 0;
 
-            document.getElementById('heroShowcase').innerHTML = `
-                <div class="hero-copy">
-                    <p class="eyebrow">${escapeHtml(copy.heroEyebrow)}</p>
-                    <div class="hero-badges">${badges}</div>
-                    <h1>${escapeHtml(primaryVideo.vod_name || '浮光推荐')}</h1>
-                    <p class="hero-description">${escapeHtml(VideoMeta.getDescription(primaryVideo))}</p>
-                    <div class="hero-meta-line">
-                        <span>${escapeHtml(primaryVideo.type_name || '未分类')}</span>
-                        <span>${escapeHtml(VideoMeta.formatTime(primaryVideo.vod_time))}</span>
-                        <span>${escapeHtml(primaryVideo.source_name || thirdMeta)}</span>
+            if (showcaseVideos.length >= 5) {
+                document.getElementById('heroShowcase').classList.add('is-stack-mode');
+                document.getElementById('heroShowcase').innerHTML = `
+                    <div class="hero-stack-shell">
+                        <div class="hero-stack-head">
+                            <p class="eyebrow">${escapeHtml(copy.heroEyebrow)}</p>
+                        </div>
+                        <div class="hero-stack-wall" style="--hero-stack-width:${stackCardWidth}%; --hero-stack-step:${stackStep}%;">
+                            ${showcaseVideos.map((video, index) => {
+                                const stackBadges = VideoMeta.getStatusBadges(video).slice(0, 2).map(item => UI.renderBadge(item.label, item.tone)).join('');
+                                const sourceLabel = video.source_name || video.type_name || DataAdapter.getKindLabel(video.source_kind || video.kind);
+                                return `
+                                    <article class="hero-stack-card" style="--hero-stack-index:${index};" onclick="goToDetail(${video.vod_id}, ${video.source_id || 'null'})">
+                                        <div class="hero-stack-poster">
+                                            ${UI.renderPosterPlaceholder(`hero-stack-${video.vod_id}`, '浮光')}
+                                            <div class="hero-stack-overlay" aria-hidden="true"></div>
+                                        </div>
+                                        <div class="hero-stack-copy">
+                                            <div class="hero-badges">${stackBadges}</div>
+                                            <span class="hero-stack-summary">${escapeHtml(VideoMeta.getSearchSummary(video) || '浮光片库')}</span>
+                                            <h3>${escapeHtml(video.vod_name || '浮光推荐')}</h3>
+                                            <p>${escapeHtml(VideoMeta.getDescription(video))}</p>
+                                            <div class="hero-stack-meta">
+                                                <span>${escapeHtml(sourceLabel)}</span>
+                                                <em>${escapeHtml(VideoMeta.formatTime(video.vod_time) || '浮光片库')}</em>
+                                            </div>
+                                        </div>
+                                    </article>
+                                `;
+                            }).join('')}
+                        </div>
                     </div>
-                    <div class="hero-actions">
-                        <a class="btn-primary" href="${escapeHtml(getDetailUrl(primaryVideo.vod_id, primaryVideo.source_id))}">${escapeHtml(copy.heroAction)}</a>
-                        <button class="btn-secondary" onclick="scrollToCatalog()">${escapeHtml(copy.heroBrowse)}</button>
+                `;
+            } else {
+                document.getElementById('heroShowcase').classList.remove('is-stack-mode');
+                const thirdMeta = kind === 'art'
+                    ? (primaryVideo.art_author || primaryVideo.art_from || '资讯内容')
+                    : VideoMeta.getPrimarySourceLabel(primaryVideo);
+
+                document.getElementById('heroShowcase').innerHTML = `
+                    <div class="hero-copy">
+                        <p class="eyebrow">${escapeHtml(copy.heroEyebrow)}</p>
+                        <div class="hero-badges">${badges}</div>
+                        <h1>${escapeHtml(primaryVideo.vod_name || '浮光推荐')}</h1>
+                        <p class="hero-description">${escapeHtml(VideoMeta.getDescription(primaryVideo))}</p>
+                        <div class="hero-meta-line">
+                            <span>${escapeHtml(primaryVideo.type_name || '未分类')}</span>
+                            <span>${escapeHtml(VideoMeta.formatTime(primaryVideo.vod_time))}</span>
+                            <span>${escapeHtml(primaryVideo.source_name || thirdMeta)}</span>
+                        </div>
+                        <div class="hero-actions">
+                            <a class="btn-primary" href="${escapeHtml(getDetailUrl(primaryVideo.vod_id, primaryVideo.source_id))}">${escapeHtml(copy.heroAction)}</a>
+                            <button class="btn-secondary" onclick="scrollToCatalog()">${escapeHtml(copy.heroBrowse)}</button>
+                        </div>
                     </div>
-                </div>
-                <div class="hero-poster-frame">
-                    ${UI.renderPosterPlaceholder(`hero-poster-${primaryVideo.vod_id}`, '浮光')}
-                </div>
-            `;
+                    <div class="hero-poster-frame">
+                        ${UI.renderPosterPlaceholder(`hero-poster-${primaryVideo.vod_id}`, '浮光')}
+                    </div>
+                `;
+            }
 
             document.getElementById('heroSide').innerHTML = secondaryVideos.map(video => `
                 <article class="hero-mini-card" onclick="goToDetail(${video.vod_id}, ${video.source_id || 'null'})">
@@ -608,10 +652,11 @@
         }
 
         function loadHeroPosterAssets(videos) {
-            const heroItems = videos.slice(0, 6);
+            const heroItems = videos.slice(0, 10);
             heroItems.forEach(video => {
                 const source = SourceManager.getSourceById(video.source_id) || currentSource;
                 UI.loadPosterAsync(video.vod_id, source, `hero-poster-${video.vod_id}`, video.vod_name);
+                UI.loadPosterAsync(video.vod_id, source, `hero-stack-${video.vod_id}`, video.vod_name);
                 UI.loadPosterAsync(video.vod_id, source, `hero-mini-${video.vod_id}`, video.vod_name);
             });
         }
