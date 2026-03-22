@@ -256,6 +256,7 @@ body.music-page {
 }
 
 .source-selector {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -263,11 +264,145 @@ body.music-page {
     border-radius: 999px;
     background: var(--field-bg);
     border: 1px solid var(--field-border);
+    overflow: visible;
 }
 
 .source-selector label {
     color: var(--text-muted);
     font-size: 13px;
+}
+
+.source-selector.is-customized {
+    gap: 12px;
+}
+
+.source-selector-native {
+    display: none;
+}
+
+.source-selector-trigger {
+    min-width: 130px;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.source-selector-trigger-copy {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.source-selector-chevron {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    transition: transform 0.24s ease, background 0.24s ease, color 0.24s ease;
+}
+
+.source-selector.is-open {
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--field-border));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 10px 24px rgba(0, 0, 0, 0.12);
+}
+
+.source-selector.is-open .source-selector-chevron {
+    transform: rotate(180deg);
+    background: color-mix(in srgb, var(--accent) 22%, var(--surface-strong));
+    color: var(--text-primary);
+}
+
+.source-selector-menu {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    width: max(220px, 100%);
+    max-height: min(320px, calc(100vh - 120px));
+    padding: 8px;
+    overflow-y: auto;
+    border-radius: 22px;
+    border: 1px solid color-mix(in srgb, var(--surface-border) 92%, transparent);
+    background:
+        radial-gradient(circle at top left, rgba(255, 183, 101, 0.12), transparent 34%),
+        linear-gradient(180deg, var(--panel-top), var(--panel-bottom));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        0 18px 40px rgba(0, 0, 0, 0.22);
+    backdrop-filter: blur(20px);
+    z-index: 70;
+}
+
+.source-selector-menu::-webkit-scrollbar {
+    width: 8px;
+}
+
+.source-selector-menu::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.source-selector-option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 12px;
+    border-radius: 16px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+
+.source-selector-option:hover,
+.source-selector-option:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+    border-color: color-mix(in srgb, var(--surface-border) 88%, transparent);
+}
+
+.source-selector-option.is-active {
+    background:
+        linear-gradient(135deg, rgba(255, 122, 89, 0.16), rgba(124, 198, 255, 0.1)),
+        color-mix(in srgb, var(--surface-strong) 90%, transparent);
+    border-color: rgba(255, 183, 101, 0.28);
+}
+
+.source-selector-option span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-selector-option em {
+    font-style: normal;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
 }
 
 .source-selector select {
@@ -2368,6 +2503,33 @@ body.music-page {
     font-size: 15px;
 }
 
+.home-page .section-tools {
+    gap: 8px;
+}
+
+.home-page .summary-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 38px;
+    padding: 8px 12px;
+    border-radius: 14px;
+}
+
+.home-page .summary-chip span {
+    margin-bottom: 0;
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.home-page .summary-chip strong {
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
 .category-nav,
 .filter-strip,
 .source-tabs,
@@ -2400,11 +2562,22 @@ body.music-page {
     margin-top: 18px;
 }
 
+.home-page .filter-strip {
+    gap: 8px;
+    margin-top: 12px;
+}
+
 .filter-chip {
     display: inline-flex;
     align-items: center;
     gap: 12px;
     padding: 11px 14px;
+}
+
+.home-page .filter-chip {
+    gap: 8px;
+    min-height: 36px;
+    padding: 8px 12px;
 }
 
 .filter-chip em,
@@ -3703,11 +3876,16 @@ body.music-page {
         display: none;
     }
 
-    .home-page .source-selector select {
+    .home-page .source-selector-trigger {
         min-width: 0;
         width: 100%;
         font-size: 13px;
         line-height: 1.2;
+    }
+
+    .home-page .source-selector-menu {
+        left: 0;
+        width: max(220px, 100%);
     }
 
     .home-page .cinematic-search.search-box {

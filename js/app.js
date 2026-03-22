@@ -1601,6 +1601,200 @@ function getUrlParam(name) {
     return url.searchParams.get(name);
 }
 
+function syncSourceSelectorMenuAnchor(wrapper, trigger) {
+    if (!wrapper || !trigger) {
+        return;
+    }
+
+    wrapper.style.setProperty('--source-selector-menu-left', `${trigger.offsetLeft}px`);
+    wrapper.style.setProperty('--source-selector-menu-width', `${trigger.offsetWidth}px`);
+}
+
+function closeCustomSourceSelector(wrapper) {
+    if (!wrapper) {
+        return;
+    }
+
+    wrapper.classList.remove('is-open');
+    const trigger = wrapper.querySelector('.source-selector-trigger');
+    const menu = wrapper.querySelector('.source-selector-menu');
+
+    if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+    }
+
+    if (menu) {
+        menu.hidden = true;
+    }
+}
+
+function openCustomSourceSelector(wrapper) {
+    if (!wrapper) {
+        return;
+    }
+
+    const trigger = wrapper.querySelector('.source-selector-trigger');
+    const menu = wrapper.querySelector('.source-selector-menu');
+    if (!trigger || !menu) {
+        return;
+    }
+
+    syncSourceSelectorMenuAnchor(wrapper, trigger);
+    wrapper.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.hidden = false;
+}
+
+function enhanceSourceSelector(selectElement) {
+    const wrapper = selectElement?.closest('.source-selector');
+    if (!wrapper) {
+        return;
+    }
+
+    wrapper.classList.add('is-customized');
+    selectElement.classList.add('source-selector-native');
+    selectElement.tabIndex = -1;
+    selectElement.setAttribute('aria-hidden', 'true');
+
+    wrapper.querySelector('.source-selector-trigger')?.remove();
+    wrapper.querySelector('.source-selector-menu')?.remove();
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'source-selector-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+
+    const menu = document.createElement('div');
+    menu.className = 'source-selector-menu';
+    menu.hidden = true;
+    menu.setAttribute('role', 'listbox');
+    menu.id = `${selectElement.id || 'source-selector'}-menu`;
+    trigger.setAttribute('aria-controls', menu.id);
+
+    trigger.innerHTML = `
+        <span class="source-selector-trigger-copy"></span>
+        <span class="source-selector-chevron" aria-hidden="true">⌄</span>
+    `;
+
+    wrapper.append(trigger, menu);
+
+    const renderCustomOptions = () => {
+        const currentOption = selectElement.selectedOptions?.[0]
+            || selectElement.options?.[selectElement.selectedIndex]
+            || selectElement.options?.[0];
+        const triggerCopy = trigger.querySelector('.source-selector-trigger-copy');
+
+        if (triggerCopy) {
+            triggerCopy.textContent = currentOption?.textContent?.trim() || '选择片源';
+        }
+
+        menu.innerHTML = Array.from(selectElement.options).map(option => `
+            <button
+                type="button"
+                class="source-selector-option ${option.selected ? 'is-active' : ''}"
+                role="option"
+                data-value="${escapeHtml(option.value)}"
+                aria-selected="${option.selected ? 'true' : 'false'}"
+            >
+                <span>${escapeHtml(option.textContent)}</span>
+                ${option.selected ? '<em>当前</em>' : ''}
+            </button>
+        `).join('');
+
+        syncSourceSelectorMenuAnchor(wrapper, trigger);
+    };
+
+    const focusSelectedOption = () => {
+        const activeOption = menu.querySelector('.source-selector-option.is-active') || menu.querySelector('.source-selector-option');
+        activeOption?.focus();
+    };
+
+    trigger.addEventListener('click', event => {
+        event.preventDefault();
+        if (wrapper.classList.contains('is-open')) {
+            closeCustomSourceSelector(wrapper);
+            return;
+        }
+
+        openCustomSourceSelector(wrapper);
+        window.requestAnimationFrame(() => {
+            focusSelectedOption();
+        });
+    });
+
+    trigger.addEventListener('keydown', event => {
+        if (!['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+            return;
+        }
+
+        event.preventDefault();
+        openCustomSourceSelector(wrapper);
+        window.requestAnimationFrame(() => {
+            focusSelectedOption();
+        });
+    });
+
+    menu.addEventListener('click', event => {
+        const optionButton = event.target.closest('.source-selector-option');
+        if (!optionButton) {
+            return;
+        }
+
+        const nextValue = optionButton.dataset.value;
+        closeCustomSourceSelector(wrapper);
+
+        if (nextValue === selectElement.value) {
+            return;
+        }
+
+        selectElement.value = nextValue;
+        selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    menu.addEventListener('keydown', event => {
+        const options = Array.from(menu.querySelectorAll('.source-selector-option'));
+        const currentIndex = options.indexOf(document.activeElement);
+
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeCustomSourceSelector(wrapper);
+            trigger.focus();
+            return;
+        }
+
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (options.length === 0) {
+                return;
+            }
+
+            const step = event.key === 'ArrowDown' ? 1 : -1;
+            const nextIndex = currentIndex >= 0
+                ? (currentIndex + step + options.length) % options.length
+                : 0;
+            options[nextIndex]?.focus();
+        }
+    });
+
+    selectElement.addEventListener('change', () => {
+        renderCustomOptions();
+        closeCustomSourceSelector(wrapper);
+    });
+
+    document.addEventListener('click', event => {
+        if (!wrapper.contains(event.target)) {
+            closeCustomSourceSelector(wrapper);
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        syncSourceSelectorMenuAnchor(wrapper, trigger);
+    });
+
+    renderCustomOptions();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     ThemeManager.init();
 
@@ -1615,6 +1809,8 @@ document.addEventListener('DOMContentLoaded', function() {
     sourceSelector.innerHTML = sources.map(source => `
         <option value="${source.id}" ${source.id === selectedSource.id ? 'selected' : ''}>${escapeHtml(source.name)}</option>
     `).join('');
+
+    enhanceSourceSelector(sourceSelector);
 
     sourceSelector.addEventListener('change', function() {
         SourceManager.setCurrentSource(parseInt(this.value, 10));
