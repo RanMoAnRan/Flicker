@@ -56,6 +56,8 @@
         searchButton: document.getElementById('musicSearchButton'),
         pluginStatus: document.getElementById('musicPluginStatus'),
         pluginChips: document.getElementById('musicPluginChips'),
+        pluginTabsDock: document.getElementById('musicPluginTabsDock'),
+        pluginTabsDockInner: document.getElementById('musicPluginTabsDockInner'),
         resultTitle: document.getElementById('musicResultTitle'),
         resultMeta: document.getElementById('musicResultMeta'),
         topListPanel: document.getElementById('musicTopListPanel'),
@@ -1814,12 +1816,65 @@
         state.pluginTab = getPluginTabKey(activePlugin);
     }
 
+    function buildPluginTabsMarkup(tabs, activeTabKey) {
+        const activeTab = tabs.find(tab => tab.key === activeTabKey) || tabs[0];
+        const activeTabIndex = Math.max(0, tabs.findIndex(tab => tab.key === activeTab.key));
+
+        return `
+            <div
+                class="music-plugin-tabs"
+                role="tablist"
+                aria-label="插件分类"
+                style="--tab-count:${tabs.length}; --active-tab-index:${activeTabIndex};"
+            >
+                <span class="music-plugin-tab-indicator" aria-hidden="true"></span>
+                ${tabs.map(tab => `
+                    <button
+                        type="button"
+                        class="music-plugin-tab ${tab.key === activeTab.key ? 'active' : ''}"
+                        data-plugin-tab="${escapeHtml(tab.key)}"
+                        role="tab"
+                        aria-selected="${tab.key === activeTab.key ? 'true' : 'false'}"
+                    >
+                        <span>${escapeHtml(tab.title)}</span>
+                        <em>${escapeHtml(`${tab.count} 个`)}</em>
+                    </button>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    function bindPluginTabEvents(root) {
+        if (!root) {
+            return;
+        }
+
+        root.querySelectorAll('[data-plugin-tab]').forEach(button => {
+            button.addEventListener('click', () => {
+                const nextTab = button.dataset.pluginTab || 'recommended';
+                if (nextTab === state.pluginTab) {
+                    return;
+                }
+                state.pluginTab = nextTab;
+                renderPluginChips();
+            });
+        });
+    }
+
     function renderPluginChips() {
         const recommendedPlugins = state.enabledPlugins;
         const extraSearchablePlugins = state.plugins.filter(plugin => plugin.searchable && !plugin.recommended);
         const unsupportedPlugins = state.plugins.filter(plugin => !plugin.searchable);
 
         if (state.plugins.length === 0) {
+            if (elements.pluginTabsDock) {
+                elements.pluginTabsDock.hidden = true;
+            }
+
+            if (elements.pluginTabsDockInner) {
+                elements.pluginTabsDockInner.innerHTML = '';
+            }
+
             elements.pluginChips.innerHTML = `
                 <div class="empty-state">
                     <div class="icon">🎵</div>
@@ -1886,28 +1941,19 @@
         ];
 
         const activeTab = tabs.find(tab => tab.key === state.pluginTab) || tabs[0];
-        const activeTabIndex = Math.max(0, tabs.findIndex(tab => tab.key === activeTab.key));
+        const tabsMarkup = buildPluginTabsMarkup(tabs, activeTab.key);
+
+        if (elements.pluginTabsDockInner) {
+            elements.pluginTabsDockInner.innerHTML = tabsMarkup;
+        }
+
+        if (elements.pluginTabsDock) {
+            elements.pluginTabsDock.hidden = false;
+        }
 
         elements.pluginChips.innerHTML = `
-            <div
-                class="music-plugin-tabs"
-                role="tablist"
-                aria-label="插件分类"
-                style="--tab-count:${tabs.length}; --active-tab-index:${activeTabIndex};"
-            >
-                <span class="music-plugin-tab-indicator" aria-hidden="true"></span>
-                ${tabs.map(tab => `
-                    <button
-                        type="button"
-                        class="music-plugin-tab ${tab.key === activeTab.key ? 'active' : ''}"
-                        data-plugin-tab="${escapeHtml(tab.key)}"
-                        role="tab"
-                        aria-selected="${tab.key === activeTab.key ? 'true' : 'false'}"
-                    >
-                        <span>${escapeHtml(tab.title)}</span>
-                        <em>${escapeHtml(`${tab.count} 个`)}</em>
-                    </button>
-                `).join('')}
+            <div class="music-plugin-tabs-inline">
+                ${tabsMarkup}
             </div>
             <section class="music-plugin-section music-plugin-tab-panel" data-plugin-panel="${escapeHtml(activeTab.key)}">
                 ${activeTab.content
@@ -1922,16 +1968,8 @@
             </section>
         `;
 
-        elements.pluginChips.querySelectorAll('[data-plugin-tab]').forEach(button => {
-            button.addEventListener('click', () => {
-                const nextTab = button.dataset.pluginTab || 'recommended';
-                if (nextTab === state.pluginTab) {
-                    return;
-                }
-                state.pluginTab = nextTab;
-                renderPluginChips();
-            });
-        });
+        bindPluginTabEvents(elements.pluginChips);
+        bindPluginTabEvents(elements.pluginTabsDockInner);
 
         elements.pluginChips.querySelectorAll('.music-plugin-chip:not(.disabled)').forEach(button => {
             button.addEventListener('click', async () => {

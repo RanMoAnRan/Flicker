@@ -629,6 +629,25 @@ body.music-page {
     gap: 12px;
 }
 
+.music-subnav-shell {
+    padding-top: 0;
+    background: transparent;
+    border-top: 1px solid color-mix(in srgb, var(--header-border) 82%, transparent);
+}
+
+.music-subnav-container {
+    width: 100%;
+}
+
+.music-subnav-card {
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
 .panel-card {
     position: relative;
     overflow: hidden;
@@ -657,6 +676,67 @@ body.music-page {
 .music-entry-btn {
     background: linear-gradient(135deg, rgba(124, 198, 255, 0.2), rgba(255, 183, 101, 0.18));
     border-color: rgba(124, 198, 255, 0.3);
+}
+
+.back-to-top-btn {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: 48px;
+    height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--surface-border) 88%, transparent);
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 92%, transparent), color-mix(in srgb, var(--field-bg) 96%, transparent));
+    color: var(--text-primary);
+    box-shadow:
+        0 14px 28px rgba(0, 0, 0, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(14px);
+    transition:
+        opacity var(--transition),
+        transform var(--transition),
+        background var(--transition),
+        border-color var(--transition),
+        box-shadow var(--transition);
+    z-index: 56;
+}
+
+.back-to-top-btn span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    font-weight: 700;
+    transform: translateY(-1px);
+}
+
+.back-to-top-btn.is-visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.back-to-top-btn:hover {
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--surface-border));
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 96%, transparent), color-mix(in srgb, var(--field-bg) 98%, transparent));
+    box-shadow:
+        0 18px 32px rgba(0, 0, 0, 0.22),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.music-page .back-to-top-btn {
+    bottom: 172px;
 }
 
 .hero-band {
@@ -767,6 +847,72 @@ body.music-page {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.music-plugin-tabs-inline {
+    display: none;
+}
+
+.music-subnav-card .music-plugin-tabs {
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+}
+
+.music-subnav-card .music-plugin-tab-indicator {
+    display: none;
+}
+
+.music-subnav-card .music-plugin-tab {
+    width: auto;
+    min-width: 0;
+    min-height: 46px;
+    padding: 13px 18px 11px;
+    border-radius: 0;
+    align-items: center;
+    justify-content: center;
+    flex-direction: row;
+    gap: 8px;
+    color: color-mix(in srgb, var(--text-secondary) 92%, var(--text-muted));
+    border-bottom: 2px solid transparent;
+}
+
+.music-subnav-card .music-plugin-tab span {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+}
+
+.music-subnav-card .music-plugin-tab em {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: color-mix(in srgb, var(--text-muted) 82%, transparent);
+}
+
+.music-subnav-card .music-plugin-tab:not(.active):hover {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.music-subnav-card .music-plugin-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: color-mix(in srgb, var(--accent) 76%, white 6%);
+}
+
+.music-subnav-card .music-plugin-tab.active:hover {
+    background: transparent;
+}
+
+.music-subnav-card .music-plugin-tab.active em {
+    color: color-mix(in srgb, var(--accent) 58%, var(--text-muted));
 }
 
 .music-plugin-tabs {
@@ -3540,6 +3686,26 @@ body.music-page {
 }
 
 @media (max-width: 900px) {
+    .back-to-top-btn {
+        right: 18px;
+        bottom: 18px;
+        width: 46px;
+        height: 46px;
+        border-radius: 15px;
+    }
+
+    .music-page .back-to-top-btn {
+        bottom: 132px;
+    }
+
+    .music-subnav-shell {
+        display: none;
+    }
+
+    .music-plugin-tabs-inline {
+        display: block;
+    }
+
     .header-inner,
     .header-right {
         flex-wrap: wrap;
@@ -3631,6 +3797,18 @@ body.music-page {
 }
 
 @media (max-width: 640px) {
+    .back-to-top-btn {
+        right: 14px;
+        bottom: 14px;
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+    }
+
+    .music-page .back-to-top-btn {
+        bottom: 148px;
+    }
+
     .container {
         width: min(100% - 20px, 100%);
     }

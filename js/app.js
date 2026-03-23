@@ -339,6 +339,90 @@ const AccessGuard = {
     }
 };
 
+const BackToTopManager = {
+    SHOW_OFFSET_VIEWPORTS: 1,
+    button: null,
+    frameId: 0,
+
+    shouldEnable() {
+        return document.body.classList.contains('home-page') || document.body.classList.contains('music-page');
+    },
+
+    ensureButton() {
+        if (this.button) {
+            return this.button;
+        }
+
+        const existing = document.getElementById('backToTopButton');
+        if (existing) {
+            this.button = existing;
+            return existing;
+        }
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = 'backToTopButton';
+        button.className = 'back-to-top-btn';
+        button.setAttribute('aria-label', '回到顶部');
+        button.setAttribute('title', '回到顶部');
+        button.innerHTML = '<span aria-hidden="true">↑</span>';
+        button.addEventListener('click', () => {
+            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            window.scrollTo({
+                top: 0,
+                behavior: prefersReducedMotion ? 'auto' : 'smooth'
+            });
+        });
+
+        document.body.appendChild(button);
+        this.button = button;
+        return button;
+    },
+
+    getScrollTop() {
+        return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    },
+
+    getShowThreshold() {
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        return viewportHeight * this.SHOW_OFFSET_VIEWPORTS;
+    },
+
+    syncVisibility() {
+        const button = this.ensureButton();
+        const shouldShow = this.getScrollTop() > this.getShowThreshold();
+        button.classList.toggle('is-visible', shouldShow);
+    },
+
+    requestSync() {
+        if (this.frameId) {
+            return;
+        }
+
+        this.frameId = window.requestAnimationFrame(() => {
+            this.frameId = 0;
+            this.syncVisibility();
+        });
+    },
+
+    init() {
+        if (!this.shouldEnable()) {
+            return;
+        }
+
+        this.ensureButton();
+        this.syncVisibility();
+
+        window.addEventListener('scroll', () => {
+            this.requestSync();
+        }, { passive: true });
+
+        window.addEventListener('resize', () => {
+            this.requestSync();
+        });
+    }
+};
+
 function escapeHtml(value) {
     const stringValue = String(value ?? '');
     return stringValue
@@ -1797,6 +1881,7 @@ function enhanceSourceSelector(selectElement) {
 
 document.addEventListener('DOMContentLoaded', function() {
     ThemeManager.init();
+    BackToTopManager.init();
 
     const sourceSelector = document.getElementById('sourceSelector');
     if (!sourceSelector) {
