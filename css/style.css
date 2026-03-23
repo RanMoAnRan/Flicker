@@ -3051,6 +3051,19 @@ body.music-page {
     color: var(--text-secondary);
 }
 
+.music-search-pagination {
+    margin-top: 18px;
+    justify-content: center;
+    gap: 10px;
+}
+
+.music-search-pagination .page-info {
+    flex: 0 0 auto;
+    min-width: 78px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
 .footer {
     padding: 6px 0 32px;
 }

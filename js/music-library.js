@@ -29,6 +29,11 @@
         activeTopListId: '',
         activeTopListGroupTitle: '',
         currentKeyword: '',
+        searchPaginationVisible: false,
+        searchPage: 1,
+        searchHasNextPage: false,
+        searchPluginStatuses: [],
+        isSearchPaginationLoading: false,
         searchResults: [],
         resultsHydrationToken: 0,
         recommendationRequestToken: 0,
@@ -55,11 +60,15 @@
         searchClearButton: document.getElementById('musicSearchClearButton'),
         searchButton: document.getElementById('musicSearchButton'),
         pluginStatus: document.getElementById('musicPluginStatus'),
+        pluginPanel: document.querySelector('.music-plugin-panel'),
         pluginChips: document.getElementById('musicPluginChips'),
         pluginTabsDock: document.getElementById('musicPluginTabsDock'),
         pluginTabsDockInner: document.getElementById('musicPluginTabsDockInner'),
+        resultEyebrow: document.getElementById('musicResultEyebrow'),
         resultTitle: document.getElementById('musicResultTitle'),
         resultMeta: document.getElementById('musicResultMeta'),
+        resultsPanel: document.getElementById('musicResults')?.closest('.panel-card'),
+        searchPagination: document.getElementById('musicSearchPagination'),
         topListPanel: document.getElementById('musicTopListPanel'),
         topListStatus: document.getElementById('musicTopListStatus'),
         topListGroups: document.getElementById('musicTopListGroups'),
@@ -1444,10 +1453,6 @@
             tags.push(UI.renderBadge(track.plugin, 'accent'));
         }
 
-        if (track.album) {
-            tags.push(UI.renderBadge(track.album, 'default'));
-        }
-
         if (Number(track?.duration) > 0) {
             tags.push(UI.renderBadge(track.durationText, 'success'));
         }
@@ -1785,7 +1790,7 @@
         elements.playerTitle.textContent = track.title;
         elements.playerArtist.textContent = `${track.artist}${track.album ? ` · ${track.album}` : ''}`;
         elements.playerTags.innerHTML = renderTrackTags(track);
-        elements.playerAudio.setAttribute('title', track.title || '浮光音乐库');
+        elements.playerAudio.removeAttribute('title');
         updateLyricDialogTitle(track);
         updateMediaSessionMetadata(track);
     }
@@ -1816,6 +1821,155 @@
         state.pluginTab = getPluginTabKey(activePlugin);
     }
 
+    function getPluginPanelElement() {
+        return elements.pluginPanel || elements.pluginChips?.closest('.music-plugin-panel') || null;
+    }
+
+    function getStickyHeaderOffset() {
+        const header = document.querySelector('.header');
+        if (!header) {
+            return 12;
+        }
+
+        const styles = window.getComputedStyle(header);
+        const borderBottomWidth = Number.parseFloat(styles.borderBottomWidth) || 0;
+        return Math.ceil(header.getBoundingClientRect().height + borderBottomWidth + 12);
+    }
+
+    function scrollToPluginPanel(options = {}) {
+        const panel = getPluginPanelElement();
+        if (!panel) {
+            return;
+        }
+
+        const targetTop = Math.max(
+            0,
+            window.scrollY + panel.getBoundingClientRect().top - getStickyHeaderOffset()
+        );
+        const currentTop = window.scrollY || document.documentElement.scrollTop || 0;
+        if (!options.force && Math.abs(currentTop - targetTop) < 12) {
+            return;
+        }
+
+        window.scrollTo({
+            top: targetTop,
+            behavior: options.behavior || 'smooth'
+        });
+    }
+
+    function getResultsPanelElement() {
+        return elements.resultsPanel || elements.results?.closest('.panel-card') || null;
+    }
+
+    function scrollToResultsPanel(options = {}) {
+        const panel = getResultsPanelElement();
+        if (!panel) {
+            return;
+        }
+
+        const targetTop = Math.max(
+            0,
+            window.scrollY + panel.getBoundingClientRect().top - getStickyHeaderOffset()
+        );
+        const currentTop = window.scrollY || document.documentElement.scrollTop || 0;
+        if (!options.force && Math.abs(currentTop - targetTop) < 12) {
+            return;
+        }
+
+        window.scrollTo({
+            top: targetTop,
+            behavior: options.behavior || 'smooth'
+        });
+    }
+
+    function resetSearchPagination(options = {}) {
+        if (options.clearKeyword) {
+            state.currentKeyword = '';
+        }
+
+        state.searchPaginationVisible = false;
+        state.searchPage = 1;
+        state.searchHasNextPage = false;
+        state.searchPluginStatuses = [];
+        state.isSearchPaginationLoading = false;
+        renderSearchPagination();
+    }
+
+    function updateSearchPagination(pluginStatuses, page) {
+        state.searchPage = Math.max(1, Number(page) || 1);
+        state.searchPluginStatuses = Array.isArray(pluginStatuses) ? pluginStatuses.map(item => ({ ...item })) : [];
+        state.searchHasNextPage = state.searchPluginStatuses.some(plugin => (
+            plugin?.ok
+            && Number(plugin?.count) > 0
+            && plugin?.isEnd === false
+        ));
+    }
+
+    function renderSearchPagination() {
+        if (!elements.searchPagination) {
+            return;
+        }
+
+        const shouldShow = Boolean(state.searchPaginationVisible);
+        if (!shouldShow) {
+            elements.searchPagination.hidden = true;
+            elements.searchPagination.innerHTML = '';
+            return;
+        }
+
+        const currentPage = Math.max(1, Number(state.searchPage) || 1);
+        const firstDisabled = currentPage <= 1 || state.isSearchPaginationLoading;
+        const prevDisabled = currentPage <= 1 || state.isSearchPaginationLoading;
+        const nextDisabled = !state.searchHasNextPage || state.isSearchPaginationLoading;
+        const pageLabel = state.isSearchPaginationLoading
+            ? `第 ${currentPage} 页加载中...`
+            : `第 ${currentPage} 页`;
+
+        elements.searchPagination.hidden = false;
+        elements.searchPagination.innerHTML = `
+            <button type="button" data-search-page-action="first" ${firstDisabled ? 'disabled' : ''}>首页</button>
+            <button type="button" data-search-page-action="prev" ${prevDisabled ? 'disabled' : ''}>上一页</button>
+            <span class="page-info">${escapeHtml(pageLabel)}</span>
+            <button type="button" data-search-page-action="next" ${nextDisabled ? 'disabled' : ''}>下一页</button>
+        `;
+
+        elements.searchPagination.querySelector('[data-search-page-action="first"]')?.addEventListener('click', () => {
+            if (state.searchPage <= 1 || state.isSearchPaginationLoading) {
+                return;
+            }
+
+            void performSearch({
+                page: 1,
+                keyword: state.currentKeyword,
+                scrollToResults: true
+            });
+        });
+
+        elements.searchPagination.querySelector('[data-search-page-action="prev"]')?.addEventListener('click', () => {
+            if (state.searchPage <= 1 || state.isSearchPaginationLoading) {
+                return;
+            }
+
+            void performSearch({
+                page: state.searchPage - 1,
+                keyword: state.currentKeyword,
+                scrollToResults: true
+            });
+        });
+
+        elements.searchPagination.querySelector('[data-search-page-action="next"]')?.addEventListener('click', () => {
+            if (!state.searchHasNextPage || state.isSearchPaginationLoading) {
+                return;
+            }
+
+            void performSearch({
+                page: state.searchPage + 1,
+                keyword: state.currentKeyword,
+                scrollToResults: true
+            });
+        });
+    }
+
     function buildPluginTabsMarkup(tabs, activeTabKey) {
         const activeTab = tabs.find(tab => tab.key === activeTabKey) || tabs[0];
         const activeTabIndex = Math.max(0, tabs.findIndex(tab => tab.key === activeTab.key));
@@ -1844,7 +1998,7 @@
         `;
     }
 
-    function bindPluginTabEvents(root) {
+    function bindPluginTabEvents(root, options = {}) {
         if (!root) {
             return;
         }
@@ -1853,10 +2007,16 @@
             button.addEventListener('click', () => {
                 const nextTab = button.dataset.pluginTab || 'recommended';
                 if (nextTab === state.pluginTab) {
+                    if (options.scrollToPanel) {
+                        scrollToPluginPanel();
+                    }
                     return;
                 }
                 state.pluginTab = nextTab;
                 renderPluginChips();
+                if (options.scrollToPanel) {
+                    scrollToPluginPanel({ force: true });
+                }
             });
         });
     }
@@ -1925,7 +2085,7 @@
                 title: '其他音乐插件',
                 caption: '',
                 count: extraSearchablePlugins.length,
-                content: extraSearchablePlugins.map(plugin => renderChip(plugin)).join(''),
+                content: extraSearchablePlugins.map(plugin => renderChip(plugin, { showReason: false })).join(''),
                 emptyTitle: '当前没有其他音乐插件',
                 emptyDescription: '远程目录里暂时没有待筛选的额外音乐插件。'
             },
@@ -1969,7 +2129,7 @@
         `;
 
         bindPluginTabEvents(elements.pluginChips);
-        bindPluginTabEvents(elements.pluginTabsDockInner);
+        bindPluginTabEvents(elements.pluginTabsDockInner, { scrollToPanel: true });
 
         elements.pluginChips.querySelectorAll('.music-plugin-chip:not(.disabled)').forEach(button => {
             button.addEventListener('click', async () => {
@@ -2124,8 +2284,18 @@
         elements.resultTitle.hidden = !nextText;
     }
 
+    function setResultEyebrow(text = '') {
+        if (!elements.resultEyebrow) {
+            return;
+        }
+
+        elements.resultEyebrow.textContent = String(text || '').trim() || '榜单结果';
+    }
+
     function showBrowseHint() {
+        resetSearchPagination({ clearKeyword: true });
         state.searchResults = [];
+        setResultEyebrow('榜单结果');
         setResultTitle('');
         elements.resultMeta.textContent = '“全部搜索”默认只检索推荐音乐插件；你也可以直接点某个推荐插件浏览它的榜单。';
         UI.showEmpty(elements.results, '等待搜索或浏览榜单', '输入歌名搜索，或先从上面的推荐插件里选一个直接查看默认榜单。');
@@ -2137,7 +2307,7 @@
         }
 
         const nextText = String(text || '').trim();
-        elements.topListStatus.textContent = nextText || '切换分组后选择榜单，歌曲会显示在下方搜索结果区域。';
+        elements.topListStatus.textContent = nextText || '榜单';
     }
 
     function getTopListGroupEntries() {
@@ -2329,15 +2499,17 @@
             state.activeTopListGroupTitle = payload.source?.groupTitle || '';
             resolveActiveTopListGroup({ syncWithActiveTopList: true });
             state.searchResults = payload.list || [];
+            renderSearchPagination();
             renderRecommendTopLists();
             renderResults(state.searchResults);
             void hydrateSearchResultsMetadata();
 
             const sourceTitle = payload.source?.title || '推荐榜单';
             const sourceGroup = payload.source?.groupTitle || pluginName;
+            setResultEyebrow('榜单结果');
             setResultTitle('');
             elements.resultMeta.textContent = `${sourceGroup} · 当前榜单：${sourceTitle} · 共 ${payload.total || state.searchResults.length} 首歌曲。`;
-            setTopListPanelHint(`${sourceGroup} · 切换分组后选择榜单`);
+            setTopListPanelHint('榜单');
             return true;
         } catch (error) {
             if (requestToken !== state.recommendationRequestToken) {
@@ -2390,6 +2562,7 @@
 
         const requestToken = ++state.recommendationRequestToken;
         state.currentKeyword = '';
+        resetSearchPagination();
         state.searchResults = [];
         setResultTitle('');
         elements.resultMeta.textContent = `正在加载 ${pluginName} 的推荐榜单...`;
@@ -2444,16 +2617,31 @@
         }
     }
 
-    async function performSearch() {
-        const keyword = elements.searchInput.value.trim();
+    async function performSearch(options = {}) {
+        const requestedPage = Math.max(1, Number(options.page) || 1);
+        const rawKeyword = options.keyword ?? (requestedPage > 1 ? state.currentKeyword : elements.searchInput.value);
+        const keyword = String(rawKeyword || '').trim();
         if (!keyword) {
-            UI.showToast('先输入一个歌曲关键词吧', 'error');
+            resetSearchPagination({ clearKeyword: true });
+            updateSearchClearButton();
             elements.searchInput.focus();
+
+            if (state.activePlugin && state.activePlugin !== 'all') {
+                await loadPluginRecommendations(state.activePlugin);
+                return;
+            }
+
+            showBrowseHint();
             return;
         }
 
         resetRecommendTopLists();
         state.currentKeyword = keyword;
+        state.searchPaginationVisible = true;
+        state.searchPage = requestedPage;
+        state.isSearchPaginationLoading = true;
+        renderSearchPagination();
+        setResultEyebrow('搜索结果');
         setResultTitle(`搜索：${keyword}`);
         const activePlugin = state.activePlugin === 'all'
             ? null
@@ -2465,17 +2653,17 @@
         }
 
         elements.resultMeta.textContent = state.activePlugin === 'all'
-            ? '正在检索推荐音乐插件...'
-            : `正在检索插件 ${state.activePlugin} ...`;
+            ? `正在检索推荐音乐插件，第 ${requestedPage} 页...`
+            : `正在检索插件 ${state.activePlugin}，第 ${requestedPage} 页...`;
         UI.showLoading(elements.results, state.activePlugin === 'all'
-            ? '正在搜索推荐音乐插件...'
-            : `正在搜索 ${state.activePlugin} ...`);
+            ? `正在搜索推荐音乐插件，第 ${requestedPage} 页...`
+            : `正在搜索 ${state.activePlugin}，第 ${requestedPage} 页...`);
 
         try {
             const query = new URLSearchParams({
                 wd: keyword,
                 plugin: state.activePlugin || 'all',
-                page: '1'
+                page: String(requestedPage)
             });
             const payload = await fetchJson(`/api/music/search?${query.toString()}`);
             const pluginStatuses = Array.isArray(payload.plugins) ? payload.plugins : [];
@@ -2494,16 +2682,28 @@
                     ? `${state.activePlugin} 暂时不可用：${failedPlugin.error}`
                     : `${state.activePlugin} 搜索失败，请稍后再试`;
                 state.searchResults = [];
+                state.isSearchPaginationLoading = false;
+                updateSearchPagination(pluginStatuses, requestedPage);
+                renderSearchPagination();
                 return;
             }
 
             state.searchResults = payload.list || [];
+            state.isSearchPaginationLoading = false;
+            updateSearchPagination(pluginStatuses, requestedPage);
             renderResults(state.searchResults);
+            renderSearchPagination();
             void hydrateSearchResultsMetadata();
             elements.resultMeta.textContent = state.activePlugin === 'all'
-                ? `已搜索 ${payload.plugins?.length || 0} 个推荐插件，成功 ${okPlugins.length} 个，共找到 ${payload.total || 0} 首歌曲。`
-                : `插件 ${state.activePlugin} 搜索完成，共找到 ${payload.total || 0} 首歌曲。`;
+                ? `第 ${requestedPage} 页 · 已搜索 ${payload.plugins?.length || 0} 个推荐插件，成功 ${okPlugins.length} 个，本页找到 ${payload.total || 0} 首歌曲。`
+                : `第 ${requestedPage} 页 · 插件 ${state.activePlugin} 搜索完成，本页找到 ${payload.total || 0} 首歌曲。`;
+            if (options.scrollToResults) {
+                scrollToResultsPanel({ force: true });
+            }
         } catch (error) {
+            state.isSearchPaginationLoading = false;
+            updateSearchPagination([], requestedPage);
+            renderSearchPagination();
             UI.showError(elements.results, error.message || '音乐搜索失败');
             elements.resultMeta.textContent = '搜索失败，请稍后再试';
         }
@@ -2697,11 +2897,18 @@
         });
 
         if (elements.searchClearButton) {
-            elements.searchClearButton.addEventListener('click', () => {
+            elements.searchClearButton.addEventListener('click', async () => {
                 elements.searchInput.value = '';
-                state.currentKeyword = '';
+                resetSearchPagination({ clearKeyword: true });
                 updateSearchClearButton();
                 elements.searchInput.focus();
+
+                if (state.activePlugin && state.activePlugin !== 'all') {
+                    await loadPluginRecommendations(state.activePlugin);
+                    return;
+                }
+
+                showBrowseHint();
             });
         }
 

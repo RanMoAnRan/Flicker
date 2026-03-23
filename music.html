@@ -45,7 +45,7 @@
             <div class="music-plugin-chips" id="musicPluginChips"></div>
             <div class="music-toplist-panel" id="musicTopListPanel" hidden>
                 <div class="music-toplist-panel-head">
-                    <p class="music-toplist-status" id="musicTopListStatus">切换分组后选择榜单，歌曲会显示在下方搜索结果区域。</p>
+                    <p class="music-toplist-status" id="musicTopListStatus">榜单</p>
                 </div>
                 <div class="music-toplist-groups" id="musicTopListGroups"></div>
             </div>
@@ -54,12 +54,13 @@
         <section class="container panel-card">
             <div class="section-heading compact">
                 <div>
-                    <p class="eyebrow">搜索结果</p>
+                    <p class="eyebrow" id="musicResultEyebrow">榜单结果</p>
                     <h2 id="musicResultTitle">先输入关键词开始搜索</h2>
                 </div>
                 <span class="section-caption" id="musicResultMeta">“全部搜索”默认只检索推荐音乐插件；你也可以单独点目录里的某个音乐插件试搜。</span>
             </div>
             <div class="music-results-grid" id="musicResults"></div>
+            <div class="pagination music-search-pagination" id="musicSearchPagination" hidden></div>
         </section>
 
         <section class="container panel-card music-player-panel">
