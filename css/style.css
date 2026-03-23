@@ -681,7 +681,7 @@ body.music-page {
 .back-to-top-btn {
     position: fixed;
     right: 24px;
-    bottom: 24px;
+    bottom: 48px;
     width: 48px;
     height: 48px;
     display: inline-flex;
@@ -733,10 +733,6 @@ body.music-page {
     box-shadow:
         0 18px 32px rgba(0, 0, 0, 0.22),
         inset 0 1px 0 rgba(255, 255, 255, 0.1);
-}
-
-.music-page .back-to-top-btn {
-    bottom: 172px;
 }
 
 .hero-band {
@@ -1512,6 +1508,51 @@ body.music-page {
         padding: 8px 12px;
         font-size: 12px;
         line-height: 1;
+    }
+}
+
+@media (min-width: 641px) and (hover: hover) and (pointer: fine) {
+    .home-page .featured-tile:hover {
+        transform: translateY(-4px);
+    }
+
+    .home-page .featured-tile:hover .featured-poster {
+        border-color: color-mix(in srgb, var(--accent) 24%, var(--surface-border));
+        box-shadow: 0 18px 32px rgba(0, 0, 0, 0.18);
+    }
+
+    .home-page .featured-tile:hover .featured-poster img,
+    .home-page .featured-tile:hover .featured-poster .placeholder,
+    .home-page .featured-tile:hover .featured-poster .poster-glow {
+        transform: scale(1.028);
+        filter: saturate(1.04);
+    }
+
+    .home-page .featured-tile:hover .featured-copy h3 {
+        color: color-mix(in srgb, var(--text-primary) 74%, var(--accent));
+        transform: translateY(-1px);
+    }
+
+    .home-page .featured-tile:hover .featured-copy p,
+    .home-page .featured-tile:hover .featured-source {
+        color: color-mix(in srgb, var(--text-secondary) 92%, var(--text-primary));
+    }
+
+    .home-page .featured-tile:hover .featured-badges .meta-badge-default {
+        background: color-mix(in srgb, var(--surface-strong) 92%, var(--surface-subtle));
+        color: var(--text-primary);
+    }
+
+    .home-page .featured-tile:hover .featured-badges .meta-badge-accent {
+        background: color-mix(in srgb, rgba(255, 183, 101, 0.26) 88%, transparent);
+    }
+
+    .home-page .featured-tile:hover .featured-badges .meta-badge-warning {
+        background: color-mix(in srgb, rgba(255, 203, 119, 0.24) 88%, transparent);
+    }
+
+    .home-page .featured-tile:hover .featured-badges .meta-badge-success {
+        background: color-mix(in srgb, rgba(103, 211, 171, 0.24) 88%, transparent);
     }
 }
 
@@ -2758,18 +2799,20 @@ body.music-page {
 .featured-tile {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     cursor: pointer;
+    transition: transform var(--transition);
 }
 
 .featured-poster {
-    min-height: 210px;
+    min-height: 236px;
+    transition: box-shadow var(--transition), border-color var(--transition), filter var(--transition);
 }
 
 .featured-copy {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
 }
 
 .featured-source {
@@ -2779,6 +2822,24 @@ body.music-page {
 
 .featured-copy h3 {
     font-size: 18px;
+    line-height: 1.28;
+    transition: color var(--transition), transform var(--transition);
+}
+
+.featured-copy p,
+.featured-source {
+    line-height: 1.42;
+    transition: color var(--transition);
+}
+
+.featured-poster img,
+.featured-poster .placeholder,
+.featured-poster .poster-glow {
+    transition: transform var(--transition), filter var(--transition);
+}
+
+.featured-badges .meta-badge {
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
 }
 
 .video-grid {
@@ -3688,7 +3749,7 @@ body.music-page {
 @media (max-width: 900px) {
     .back-to-top-btn {
         right: 18px;
-        bottom: 18px;
+        bottom: 28px;
         width: 46px;
         height: 46px;
         border-radius: 15px;
@@ -3799,7 +3860,7 @@ body.music-page {
 @media (max-width: 640px) {
     .back-to-top-btn {
         right: 14px;
-        bottom: 14px;
+        bottom: 22px;
         width: 44px;
         height: 44px;
         border-radius: 14px;

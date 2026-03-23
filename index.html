@@ -122,6 +122,8 @@
         let spotlightVideos = [];
         let spotlightSourceKind = 'vod';
         let pageInfo = { total: 0, pagecount: 1 };
+        let featuredSeedVideos = [];
+        const FEATURED_COUNT = 6;
 
         const FILTER_CONFIG = {
             vod: [
@@ -302,17 +304,15 @@
                     : DataAdapter.normalizeResponse(await Api.getVideoList(currentSource, { pg: page }), currentSource);
             };
 
-            const firstPage = await fetchPageData(currentPage);
-            if (currentPage !== 1) {
-                return firstPage;
-            }
-
+            const firstPage = await fetchPageData(1);
             const pageSize = parseInt(firstPage.limit, 10) || firstPage.list?.length || 20;
-            const maxPages = Math.min(parseInt(firstPage.pagecount, 10) || 1, 6);
+            const maxPages = parseInt(firstPage.pagecount, 10) || 1;
+            const catalogStart = FEATURED_COUNT + ((Math.max(1, currentPage) - 1) * pageSize);
+            const catalogEnd = catalogStart + pageSize;
             const combined = Array.isArray(firstPage.list) ? [...firstPage.list] : [];
             let deduped = dedupeSingleSourceItems(combined);
 
-            for (let page = 2; page <= maxPages && deduped.length < pageSize; page += 1) {
+            for (let page = 2; page <= maxPages && deduped.length < catalogEnd; page += 1) {
                 const nextPage = await fetchPageData(page);
                 if (!Array.isArray(nextPage.list) || nextPage.list.length === 0) {
                     break;
@@ -324,7 +324,12 @@
 
             return {
                 ...firstPage,
-                list: deduped.slice(0, pageSize)
+                list: deduped.slice(catalogStart, catalogEnd),
+                featured_list: deduped.slice(0, pageSize),
+                total: Math.max((parseInt(firstPage.total, 10) || deduped.length) - FEATURED_COUNT, 0),
+                pagecount: Math.max(1, Math.ceil(Math.max((parseInt(firstPage.total, 10) || deduped.length) - FEATURED_COUNT, 0) / pageSize)),
+                limit: pageSize,
+                page: currentPage
             };
         }
 
@@ -371,9 +376,15 @@
                 currentStatusFilter = 'all';
             }
 
+            const countVideosByFilter = (filterKey) => {
+                const featuredCount = getFeaturedVideosForFilter(filterKey).length;
+                const catalogCount = getCatalogVideosForFilter(filterKey).length;
+                return featuredCount + catalogCount;
+            };
+
             const filteredCounts = statusFilters.map(filter => ({
                 ...filter,
-                count: filter.key === 'all' ? currentVideos.length : currentVideos.filter(video => VideoMeta.matchesFilter(video, filter.key)).length
+                count: countVideosByFilter(filter.key)
             }));
 
             document.getElementById('statusFilterBar').innerHTML = filteredCounts.map(filter => `
@@ -455,6 +466,7 @@
 
                 currentSourceKind = data.source_kind;
                 currentVideos = data.list || [];
+                featuredSeedVideos = data.featured_list || [];
                 pageInfo = {
                     total: parseInt(data.total, 10) || currentVideos.length,
                     pagecount: parseInt(data.pagecount, 10) || 1
@@ -465,10 +477,11 @@
                 renderCurrentView();
 
                 UI.renderPagination(parseInt(data.page, 10) || currentPage, pageInfo.pagecount);
-                loadPosterAssets(currentVideos);
+                loadPosterAssets(currentVideos, featuredSeedVideos);
             } catch (error) {
                 console.error('加载视频列表失败:', error);
                 currentVideos = [];
+                featuredSeedVideos = [];
                 UI.showError(document.getElementById('videoGrid'), '加载失败，请检查数据源配置');
                 document.getElementById('featuredStrip').innerHTML = '';
                 document.getElementById('resultsMeta').textContent = '当前没有可展示的精选内容';
@@ -480,21 +493,50 @@
             return currentVideos.filter(video => VideoMeta.matchesFilter(video, currentStatusFilter));
         }
 
+        function getFeaturedVideosForFilter(filterKey = 'all') {
+            if (isAggregateSearch) {
+                const filteredAggregate = currentVideos.filter(video => VideoMeta.matchesFilter(video, filterKey));
+                return getFeaturedVideos(filteredAggregate, FEATURED_COUNT);
+            }
+
+            const filteredFeaturedSeed = featuredSeedVideos.filter(video => VideoMeta.matchesFilter(video, filterKey));
+            return getFeaturedVideos(filteredFeaturedSeed, FEATURED_COUNT);
+        }
+
+        function getCatalogVideosForFilter(filterKey = 'all') {
+            if (isAggregateSearch) {
+                const filteredAggregate = currentVideos.filter(video => VideoMeta.matchesFilter(video, filterKey));
+                const featuredVideos = getFeaturedVideos(filteredAggregate, FEATURED_COUNT);
+                return getCatalogVideos(filteredAggregate, featuredVideos.length);
+            }
+
+            return currentVideos.filter(video => VideoMeta.matchesFilter(video, filterKey));
+        }
+
         function renderCurrentView() {
-            const visibleVideos = getVisibleVideos();
-            updateSectionHeading(visibleVideos.length);
+            const featuredVideos = getFeaturedVideosForFilter(currentStatusFilter);
+            const catalogVideos = getCatalogVideosForFilter(currentStatusFilter);
+            const visibleCount = featuredVideos.length + catalogVideos.length;
 
-            renderFeaturedStrip(visibleVideos.length > 0 ? visibleVideos : currentVideos);
+            updateSectionHeading(visibleCount);
+            renderFeaturedStrip(featuredVideos);
 
-            if (visibleVideos.length > 0) {
-                renderVideoList(visibleVideos);
-                document.getElementById('catalogHint').textContent = isAggregateSearch
-                    ? `当前为全片源搜索结果，共展示 ${visibleVideos.length} 条聚合结果`
-                    : `共展示 ${visibleVideos.length} 条当前页结果`;
-            } else {
+            if (visibleCount === 0) {
                 UI.showEmpty(document.getElementById('videoGrid'), getContentCopy().empty, '可以切换状态标签、分类或数据源继续浏览。');
                 document.getElementById('catalogHint').textContent = '当前筛选条件下无匹配条目';
+                return;
             }
+
+            if (catalogVideos.length > 0) {
+                renderVideoList(catalogVideos);
+                document.getElementById('catalogHint').textContent = isAggregateSearch
+                    ? `当前为全片源搜索结果，前 ${featuredVideos.length} 条已在上方精选展示，瀑布区展示其余 ${catalogVideos.length} 条`
+                    : `前 ${featuredVideos.length} 条已在上方精选展示，瀑布区当前页展示 ${catalogVideos.length} 条`;
+                return;
+            }
+
+            UI.showEmpty(document.getElementById('videoGrid'), '当前页内容已展示完毕', '当前页内容已在上方精选片单展示完毕。');
+            document.getElementById('catalogHint').textContent = '当前页内容已在上方精选片单展示完毕';
         }
 
         function renderHeroArea() {
@@ -614,14 +656,14 @@
             `).join('');
         }
 
-        function getFeaturedVideos(videos, minimumCount = 6) {
+        function getFeaturedVideos(videos, minimumCount = FEATURED_COUNT) {
             const primaryList = Array.isArray(videos) ? videos : [];
-            if (isAggregateSearch) {
-                return primaryList.slice(0, minimumCount);
-            }
+            return primaryList.slice(0, minimumCount);
+        }
 
-            const merged = dedupeSingleSourceItems([...primaryList, ...spotlightVideos]);
-            return merged.slice(0, minimumCount);
+        function getCatalogVideos(videos, featuredCount = FEATURED_COUNT) {
+            const primaryList = Array.isArray(videos) ? videos : [];
+            return primaryList.slice(Math.max(0, featuredCount));
         }
 
         function renderFeaturedStrip(videos) {
@@ -642,9 +684,12 @@
                 </article>
             `).join('');
 
-            document.getElementById('resultsMeta').textContent = isAggregateSearch
+            const resultsMeta = document.getElementById('resultsMeta');
+            const nextMetaText = isAggregateSearch
                 ? `共搜索 ${aggregateSearchStats?.totalSources || 0} 个片源，成功 ${aggregateSearchStats?.successCount || 0} 个，聚合后 ${getVisibleVideos().length} 条`
-                : `当前页共 ${currentVideos.length} 条${getContentCopy().plural}，筛选后 ${getVisibleVideos().length} 条`;
+                : '';
+            resultsMeta.textContent = nextMetaText;
+            resultsMeta.hidden = !nextMetaText;
         }
 
         function renderVideoList(videos) {
@@ -661,9 +706,9 @@
             });
         }
 
-        function loadPosterAssets(videos) {
-            const featuredVideos = videos.slice(0, 6);
-            featuredVideos.forEach(video => {
+        function loadPosterAssets(videos, featuredVideos = null) {
+            const featuredItems = Array.isArray(featuredVideos) ? featuredVideos.slice(0, FEATURED_COUNT) : videos.slice(0, FEATURED_COUNT);
+            featuredItems.forEach(video => {
                 const source = SourceManager.getSourceById(video.source_id) || currentSource;
                 UI.loadPosterAsync(video.vod_id, source, `featured-${video.vod_id}`, video.vod_name);
             });
@@ -784,7 +829,7 @@
                 renderSourceSummary();
                 renderCurrentView();
                 document.getElementById('pagination').innerHTML = '';
-                loadPosterAssets(currentVideos);
+                loadPosterAssets(currentVideos, currentVideos);
                 scrollToSearchResults();
 
                 if (aggregateSearchStats.successCount === 0) {
