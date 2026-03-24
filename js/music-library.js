@@ -2112,9 +2112,6 @@
         }
 
         elements.pluginChips.innerHTML = `
-            <div class="music-plugin-tabs-inline">
-                ${tabsMarkup}
-            </div>
             <section class="music-plugin-section music-plugin-tab-panel" data-plugin-panel="${escapeHtml(activeTab.key)}">
                 ${activeTab.content
                     ? `<div class="music-plugin-chip-grid">${activeTab.content}</div>`
@@ -2128,7 +2125,6 @@
             </section>
         `;
 
-        bindPluginTabEvents(elements.pluginChips);
         bindPluginTabEvents(elements.pluginTabsDockInner, { scrollToPanel: true });
 
         elements.pluginChips.querySelectorAll('.music-plugin-chip:not(.disabled)').forEach(button => {
