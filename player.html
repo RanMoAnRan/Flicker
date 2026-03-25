@@ -73,6 +73,7 @@
 
     <script src="js/app.js"></script>
     <script>
+        let playerMode = 'vod';
         let videoId = null;
         let episodeIndex = 0;
         let sourceIndex = 0;
@@ -91,6 +92,12 @@
         }
 
         async function init() {
+            playerMode = getUrlParam('mode') || 'vod';
+            if (playerMode === 'iptv') {
+                initIptvMode();
+                return;
+            }
+
             videoId = getUrlParam('id');
             episodeIndex = parseInt(getUrlParam('ep'), 10) || 0;
             sourceIndex = parseInt(getUrlParam('source'), 10) || 0;
@@ -110,6 +117,94 @@
                 console.error('初始化失败:', error);
                 showError(`加载失败：${error.message}`);
             }
+        }
+
+        function initIptvMode() {
+            const channelName = getUrlParam('name') || '未命名频道';
+            const groupTitle = getUrlParam('group') || '未分组';
+            const sourceName = getUrlParam('source_name') || 'IPTV 源';
+            const playUrl = getUrlParam('play_url') || '';
+            document.body.classList.add('iptv-player-mode');
+
+            const controlPanel = document.querySelector('.player-control-panel');
+            if (controlPanel) {
+                controlPanel.hidden = true;
+            }
+
+            const sourceSelector = document.getElementById('sourceSelector');
+            const sourceSelectorShell = sourceSelector?.closest('.source-selector');
+            if (sourceSelector) {
+                sourceSelector.id = 'disabledSourceSelector';
+            }
+            if (sourceSelectorShell) {
+                sourceSelectorShell.hidden = true;
+            }
+
+            const backButton = document.querySelector('.player-header-shell .settings-btn.ghost-btn');
+            if (backButton) {
+                backButton.textContent = '返回 IPv6 库';
+            }
+
+            document.getElementById('detailLink').textContent = '回到 IPv6 库';
+            document.getElementById('detailLink').href = 'ipv6.html';
+            document.title = `${channelName} - 浮光`;
+            document.getElementById('playerTitle').textContent = channelName;
+            document.getElementById('episodeName').textContent = `${groupTitle} · ${sourceName}`;
+            document.getElementById('playerMeta').innerHTML = `
+                <div class="player-badges">
+                    ${UI.renderBadge('IPTV 直播', 'accent')}
+                    ${UI.renderBadge(groupTitle || '未分组', 'default')}
+                    ${UI.renderBadge(sourceName || 'IPTV 源', 'default')}
+                </div>
+                <div class="player-meta-card">
+                    <span>频道名称</span>
+                    <strong>${escapeHtml(channelName)}</strong>
+                </div>
+                <div class="player-meta-card">
+                    <span>频道分组</span>
+                    <strong>${escapeHtml(groupTitle)}</strong>
+                </div>
+                <div class="player-meta-card">
+                    <span>直播来源</span>
+                    <strong>${escapeHtml(sourceName)}</strong>
+                </div>
+                <div class="player-meta-card">
+                    <span>播放模式</span>
+                    <strong>实时直播流</strong>
+                </div>
+            `;
+
+            document.getElementById('playerSourceSummary').textContent = `当前直播频道 · ${sourceName}`;
+            document.getElementById('sourceTabs').innerHTML = `
+                <div class="episode-list-head">
+                    <span>当前来源</span>
+                    <strong>${escapeHtml(sourceName)} · ${escapeHtml(groupTitle)}</strong>
+                </div>
+            `;
+            document.getElementById('episodeList').innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">📡</div>
+                    <h3>${escapeHtml(channelName)}</h3>
+                    <p>当前为 IPTV 直播模式，已直接连接频道流，不提供影视剧集切换。</p>
+                </div>
+            `;
+
+            if (!playUrl) {
+                showError('缺少直播流地址');
+                return;
+            }
+
+            playSources = [{
+                name: sourceName,
+                isM3u8: playUrl.includes('.m3u8') || playUrl.includes('m3u8'),
+                episodes: [{
+                    name: channelName,
+                    url: playUrl
+                }]
+            }];
+            sourceIndex = 0;
+            episodeIndex = 0;
+            playVideo(0, 0);
         }
 
         async function loadVideoDetail() {
@@ -388,6 +483,11 @@
         }
 
         function goBack() {
+            if (playerMode === 'iptv') {
+                window.location.href = 'ipv6.html';
+                return;
+            }
+
             if (videoId) {
                 window.location.href = getDetailUrl(videoId, currentSource?.id);
                 return;
@@ -396,6 +496,11 @@
         }
 
         function reloadAll() {
+            if (playerMode === 'iptv') {
+                window.location.href = 'ipv6.html';
+                return;
+            }
+
             currentSource = SourceManager.getCurrentSource();
             const url = new URL(window.location);
             url.searchParams.set('source_id', currentSource.id);
@@ -404,14 +509,19 @@
 
         function showError(message) {
             showLoading(false);
+            const backLabel = playerMode === 'iptv' ? '返回 IPv6 库' : '返回详情';
+            const backHref = playerMode === 'iptv' ? 'ipv6.html' : 'index.html';
+            const helpText = playerMode === 'iptv'
+                ? '可以返回 IPv6 库更换频道，或稍后重试当前直播源。'
+                : '可以返回详情页更换线路，或切换片源后重试。';
             document.getElementById('videoWrapper').innerHTML = `
                 <div class="player-error">
                     <div class="icon">😢</div>
                     <h3>${escapeHtml(message)}</h3>
-                    <p>可以返回详情页更换线路，或切换片源后重试。</p>
+                    <p>${escapeHtml(helpText)}</p>
                     <div class="player-error-actions">
-                        <button class="btn-primary" onclick="goBack()">返回详情</button>
-                        <a class="btn-secondary" href="index.html">回到首页</a>
+                        <button class="btn-primary" onclick="goBack()">${escapeHtml(backLabel)}</button>
+                        <a class="btn-secondary" href="${backHref}">回到入口</a>
                     </div>
                 </div>
             `;

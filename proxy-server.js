@@ -4,6 +4,7 @@ const path = require('path');
 const { URL } = require('url');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { createMusicPluginService } = require('./music-plugin-service');
+const { createIptvService } = require('./iptv-service');
 
 const PORT = process.env.PORT || 3000;
 const ROOT_DIR = __dirname;
@@ -69,6 +70,32 @@ const musicPluginService = createMusicPluginService({
     rootDir: ROOT_DIR,
     systemProxyUrl: SYSTEM_PROXY_URL
 });
+const iptvService = createIptvService({
+    fetchText: async (targetUrl) => {
+        const parsedTargetUrl = new URL(targetUrl);
+        const response = await requestViaCurl(parsedTargetUrl, {
+            accept: 'Accept: application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*'
+        });
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+            const error = new Error(`上游 IPTV 源响应异常 (${response.statusCode})`);
+            error.statusCode = 502;
+            error.code = 'IPTV_UPSTREAM_BAD_STATUS';
+            error.upstream = parsedTargetUrl.toString();
+            throw error;
+        }
+
+        return response.body;
+    },
+    probeStream: async (targetUrl) => {
+        const parsedTargetUrl = new URL(targetUrl);
+        return requestPreviewViaCurl(parsedTargetUrl, {
+            accept: 'Accept: application/vnd.apple.mpegurl, application/x-mpegURL, video/*, audio/*, */*',
+            maxTimeSeconds: 8,
+            range: '0-1023'
+        });
+    }
+});
 
 process.on('unhandledRejection', reason => {
     console.error('[server] 捕获到未处理的 Promise 拒绝:', reason);
@@ -100,8 +127,8 @@ function buildCurlArgs(targetUrl, options = {}) {
     return curlArgs;
 }
 
-function requestViaCurl(targetUrl) {
-    const baseArgs = buildCurlArgs(targetUrl);
+function requestViaCurl(targetUrl, options = {}) {
+    const baseArgs = buildCurlArgs(targetUrl, options);
     const curlArgs = [
         ...baseArgs.slice(0, -1),
         '-w', '\n__FG_STATUS__:%{http_code}\n__FG_CONTENT_TYPE__:%{content_type}\n',
@@ -133,6 +160,55 @@ function requestViaCurl(targetUrl) {
                 statusCode,
                 contentType,
                 body
+            });
+        });
+    });
+}
+
+function requestPreviewViaCurl(targetUrl, options = {}) {
+    const baseArgs = buildCurlArgs(targetUrl, options);
+    const curlArgs = [
+        ...baseArgs.slice(0, -1),
+        '-r', options.range || '0-1023',
+        '-w', '\n__FG_STATUS__:%{http_code}\n__FG_CONTENT_TYPE__:%{content_type}\n',
+        baseArgs[baseArgs.length - 1]
+    ];
+
+    return new Promise((resolve) => {
+        execFile('curl', curlArgs, {
+            encoding: 'utf8',
+            maxBuffer: 512 * 1024
+        }, (error, stdout) => {
+            if (error) {
+                resolve({
+                    ok: false,
+                    statusCode: 0,
+                    contentType: '',
+                    preview: ''
+                });
+                return;
+            }
+
+            const statusMatch = stdout.match(/\n__FG_STATUS__:(\d{3})\n__FG_CONTENT_TYPE__:(.*)\n?$/s);
+            if (!statusMatch) {
+                resolve({
+                    ok: false,
+                    statusCode: 0,
+                    contentType: '',
+                    preview: ''
+                });
+                return;
+            }
+
+            const body = stdout.slice(0, statusMatch.index);
+            const statusCode = Number(statusMatch[1]);
+            const contentType = String(statusMatch[2] || '').trim();
+
+            resolve({
+                ok: statusCode >= 200 && statusCode < 300,
+                statusCode,
+                contentType,
+                preview: body.slice(0, 1024)
             });
         });
     });
@@ -526,6 +602,32 @@ async function handleMusicApi(req, res) {
     }
 }
 
+async function handleIptvApi(req, res) {
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+
+    try {
+        if (requestUrl.pathname === '/api/iptv/sources') {
+            sendJson(res, 200, await iptvService.listSources());
+            return;
+        }
+
+        if (requestUrl.pathname === '/api/iptv/channels') {
+            const sourceKey = requestUrl.searchParams.get('source') || '';
+            sendJson(res, 200, await iptvService.getChannels(sourceKey));
+            return;
+        }
+
+        sendJson(res, 404, { error: 'IPTV 接口不存在' });
+    } catch (error) {
+        sendJson(res, error.statusCode || 500, {
+            error: error.message || 'IPTV 接口请求失败',
+            error_code: error.code || 'IPTV_API_FAILED',
+            details: error.details || '',
+            upstream: error.upstream || ''
+        });
+    }
+}
+
 const server = http.createServer(async (req, res) => {
     if (!req.url) {
         sendJson(res, 400, { error: '无效请求' });
@@ -546,6 +648,11 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname.startsWith('/api/music/')) {
         await handleMusicApi(req, res);
+        return;
+    }
+
+    if (requestUrl.pathname.startsWith('/api/iptv/')) {
+        await handleIptvApi(req, res);
         return;
     }
 
@@ -570,4 +677,5 @@ server.listen(PORT, () => {
     console.log(`- 网站地址: http://localhost:${PORT}`);
     console.log(`- 代理接口: http://localhost:${PORT}/api/proxy?url=xxx`);
     console.log(`- 音乐接口: http://localhost:${PORT}/api/music/plugins`);
+    console.log(`- IPTV 接口: http://localhost:${PORT}/api/iptv/sources`);
 });

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPv6 库 - 浮光</title>
+    <script>
+        try {
+            document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('fuguang_theme') || '"dark"');
+        } catch (error) {
+            document.documentElement.dataset.theme = 'dark';
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="site-page ipv6-page">
+    <header class="header">
+        <div class="container header-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">播</span>
+                <span class="logo-copy">
+                    <strong>浮光</strong>
+                    <em>IPTV LIBRARY</em>
+                </span>
+            </a>
+            <div class="header-right">
+                <a href="index.html" class="settings-btn ghost-btn">视频库</a>
+                <a href="music.html" class="settings-btn music-entry-btn">音乐库</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-shell">
+        <section class="container panel-card">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">直播源</p>
+                </div>
+            </div>
+            <div class="iptv-source-tabs" id="iptvSourceTabs"></div>
+            <div class="iptv-group-tabs" id="iptvGroupTabs"></div>
+        </section>
+
+        <section class="container panel-card">
+            <div class="section-heading compact">
+                <div>
+                    <p class="eyebrow">频道列表</p>
+                </div>
+            </div>
+            <div class="iptv-channel-grid" id="iptvChannelGrid"></div>
+        </section>
+    </main>
+
+    <script src="js/app.js"></script>
+    <script src="js/ipv6-library.js"></script>
+</body>
+</html>
