@@ -1,5 +1,7 @@
 const CONFIG = {
     PROXY_URL: '/api/proxy',
+    PLAYBACK_RESOLVE_URL: '/api/playback/resolve',
+    PLAYBACK_STREAM_URL: '/api/playback/stream',
     DEFAULT_SOURCES: [
         { id: 1, name: '资源1', url: 'http://sdzyapi.com/api.php/provide/vod/', active: false, builtin: true },
         { id: 2, name: '百度', url: 'https://api.apibdzy.com/api.php/provide/vod/', active: false, builtin: true },
@@ -871,6 +873,74 @@ const Api = {
         ]);
 
         return retryableCodes.has(error?.code);
+    }
+};
+
+const PlaybackResolver = {
+    cache: new Map(),
+
+    async resolve(url) {
+        const targetUrl = String(url || '').trim();
+        if (!targetUrl) {
+            throw new Error('播放地址为空');
+        }
+
+        if (this.cache.has(targetUrl)) {
+            return this.cache.get(targetUrl);
+        }
+
+        const pending = this.requestResolve(targetUrl)
+            .catch(error => {
+                this.cache.delete(targetUrl);
+                throw error;
+            });
+
+        this.cache.set(targetUrl, pending);
+        return pending;
+    },
+
+    async requestResolve(url) {
+        const requestUrl = `${CONFIG.PLAYBACK_RESOLVE_URL}?url=${encodeURIComponent(url)}&_t=${Date.now()}`;
+        const response = await fetch(requestUrl, {
+            cache: 'no-store',
+            headers: {
+                'Cache-Control': 'no-cache'
+            }
+        });
+
+        if (!response.ok) {
+            const responseText = await response.text();
+            let errorMessage = `解析播放地址失败（${response.status}）`;
+
+            try {
+                const errorData = JSON.parse(responseText);
+                if (errorData?.error) {
+                    errorMessage = errorData.error;
+                }
+                if (errorData?.details) {
+                    errorMessage = `${errorMessage}：${errorData.details}`;
+                }
+            } catch (error) {
+                if (responseText) {
+                    errorMessage = `${errorMessage}：${responseText.slice(0, 120)}`;
+                }
+            }
+
+            throw new Error(errorMessage);
+        }
+
+        const payload = await response.json();
+        const resolvedUrl = String(payload?.url || url).trim();
+        if (!resolvedUrl) {
+            throw new Error('解析后的播放地址为空');
+        }
+
+        return resolvedUrl;
+    },
+
+    toStreamUrl(url) {
+        const targetUrl = String(url || '').trim();
+        return `${CONFIG.PLAYBACK_STREAM_URL}?url=${encodeURIComponent(targetUrl)}`;
     }
 };
 

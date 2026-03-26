@@ -12,7 +12,7 @@
         }
     </script>
     <link rel="stylesheet" href="css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="vendor/hls.min.js"></script>
 </head>
 <body class="site-page player-page">
     <header class="header player-header-shell">
@@ -82,11 +82,57 @@
         let playSources = [];
         let hls = null;
         let currentContentKind = 'vod';
+        let playRequestId = 0;
+        let video = null;
+        let loadingEl = null;
 
-        const video = document.getElementById('videoPlayer');
-        const loadingEl = document.getElementById('playerLoading');
+        function getPlayerMarkup() {
+            return `
+                <video id="videoPlayer" controls playsinline></video>
+                <div class="player-loading" id="playerLoading">
+                    <div class="loading-spinner"></div>
+                    <p>正在准备播放线路...</p>
+                </div>
+            `;
+        }
+
+        function bindVideoEvents(targetVideo) {
+            if (!targetVideo || targetVideo.dataset.bound === '1') {
+                return;
+            }
+
+            targetVideo.addEventListener('ended', function() {
+                const currentPlaySource = playSources[sourceIndex];
+                if (currentPlaySource && episodeIndex < currentPlaySource.episodes.length - 1) {
+                    switchEpisode(episodeIndex + 1);
+                }
+            });
+
+            targetVideo.addEventListener('canplay', function() {
+                showLoading(false);
+            });
+
+            targetVideo.dataset.bound = '1';
+        }
+
+        function ensurePlayerElements() {
+            const wrapper = document.getElementById('videoWrapper');
+            let nextVideo = document.getElementById('videoPlayer');
+            let nextLoading = document.getElementById('playerLoading');
+
+            if (!nextVideo || !nextLoading) {
+                wrapper.innerHTML = getPlayerMarkup();
+                nextVideo = document.getElementById('videoPlayer');
+                nextLoading = document.getElementById('playerLoading');
+            }
+
+            bindVideoEvents(nextVideo);
+            video = nextVideo;
+            loadingEl = nextLoading;
+        }
 
         function showLoading(show, message = '正在准备播放线路...') {
+            ensurePlayerElements();
             loadingEl.querySelector('p').textContent = message;
             loadingEl.style.display = show ? 'flex' : 'none';
         }
@@ -393,11 +439,12 @@
         }
 
         function resetNativeHandlers() {
+            ensurePlayerElements();
             video.onloadedmetadata = null;
             video.onerror = null;
         }
 
-        function playVideo(sourceIdx, episodeIdx) {
+        async function playVideo(sourceIdx, episodeIdx) {
             const source = playSources[sourceIdx];
             const episode = source?.episodes?.[episodeIdx];
             if (!source || !episode) {
@@ -405,17 +452,37 @@
                 return;
             }
 
-            const url = episode.url;
-            const isM3u8 = url.includes('.m3u8') || url.includes('m3u8');
+            const currentRequestId = ++playRequestId;
+            let url = String(episode.url || '').trim();
 
             document.getElementById('episodeName').textContent = `正在播放：${episode.name}`;
-            showLoading(true, '正在连接播放线路...');
+            showLoading(true, '正在解析播放线路...');
             resetNativeHandlers();
 
             if (hls) {
                 hls.destroy();
                 hls = null;
             }
+
+            try {
+                url = await PlaybackResolver.resolve(url);
+            } catch (error) {
+                if (currentRequestId !== playRequestId) {
+                    return;
+                }
+
+                console.error('解析播放地址失败:', error);
+                showError(`解析播放地址失败：${error.message}`);
+                return;
+            }
+
+            if (currentRequestId !== playRequestId) {
+                return;
+            }
+
+            const isM3u8 = url.includes('.m3u8') || url.includes('m3u8');
+            const playbackUrl = isM3u8 ? PlaybackResolver.toStreamUrl(url) : url;
+            showLoading(true, '正在连接播放线路...');
 
             if (isM3u8) {
                 if (typeof Hls !== 'undefined' && Hls.isSupported()) {
@@ -424,7 +491,7 @@
                         maxMaxBufferLength: 60,
                         enableWorker: true
                     });
-                    hls.loadSource(url);
+                    hls.loadSource(playbackUrl);
                     hls.attachMedia(video);
                     hls.on(Hls.Events.MANIFEST_PARSED, function() {
                         showLoading(false);
@@ -447,7 +514,7 @@
                 }
 
                 if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    video.src = url;
+                    video.src = playbackUrl;
                     video.onloadedmetadata = function() {
                         showLoading(false);
                         video.play().catch(() => {});
@@ -464,7 +531,7 @@
                 return;
             }
 
-            video.src = url;
+            video.src = playbackUrl;
             video.onloadedmetadata = function() {
                 showLoading(false);
                 video.play().catch(() => {});
@@ -527,17 +594,7 @@
             `;
         }
 
-        video.addEventListener('ended', function() {
-            const currentPlaySource = playSources[sourceIndex];
-            if (currentPlaySource && episodeIndex < currentPlaySource.episodes.length - 1) {
-                switchEpisode(episodeIndex + 1);
-            }
-        });
-
-        video.addEventListener('canplay', function() {
-            showLoading(false);
-        });
-
+        ensurePlayerElements();
         init();
     </script>
 </body>

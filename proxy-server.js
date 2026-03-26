@@ -15,11 +15,13 @@ const MIME_TYPES = {
     '.js': 'application/javascript; charset=utf-8',
     '.json': 'application/json; charset=utf-8',
     '.md': 'text/markdown; charset=utf-8',
+    '.m3u8': 'application/vnd.apple.mpegurl',
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon'
+    '.ico': 'image/x-icon',
+    '.ts': 'video/mp2t'
 };
 
 const DOWNLOAD_MIME_TYPES = {
@@ -31,6 +33,8 @@ const DOWNLOAD_MIME_TYPES = {
     '.wav': 'audio/wav',
     '.wma': 'audio/x-ms-wma'
 };
+
+const DIRECT_MEDIA_EXTENSIONS = ['.m3u8', '.mp4', '.webm', '.ogg', '.ogv', '.m4v'];
 
 function getSystemProxyUrl() {
     const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || '';
@@ -119,7 +123,7 @@ function buildCurlArgs(targetUrl, options = {}) {
         targetUrl.toString()
     ];
 
-    if (SYSTEM_PROXY_URL) {
+    if (SYSTEM_PROXY_URL && !options.skipProxy) {
         curlArgs.unshift(SYSTEM_PROXY_URL);
         curlArgs.unshift('--proxy');
     }
@@ -262,6 +266,232 @@ function buildContentDisposition(filename) {
         .replace(/[^\x20-\x7e]/g, '_')
         .replace(/["\\]/g, '_');
     return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
+}
+
+function looksLikeDirectMediaUrl(targetUrl) {
+    try {
+        const parsedTargetUrl = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(String(targetUrl || ''));
+        const fullPath = `${parsedTargetUrl.pathname || ''}${parsedTargetUrl.search || ''}`.toLowerCase();
+        return DIRECT_MEDIA_EXTENSIONS.some(extension => fullPath.includes(extension));
+    } catch (error) {
+        return false;
+    }
+}
+
+function isM3u8Url(targetUrl) {
+    try {
+        const parsedTargetUrl = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(String(targetUrl || ''));
+        return `${parsedTargetUrl.pathname || ''}${parsedTargetUrl.search || ''}`.toLowerCase().includes('.m3u8');
+    } catch (error) {
+        return false;
+    }
+}
+
+function normalizePlayableCandidate(value) {
+    return String(value || '')
+        .replace(/\\u002F/gi, '/')
+        .replace(/\\\//g, '/')
+        .trim();
+}
+
+function resolvePlayableCandidate(value, baseUrl) {
+    const candidate = normalizePlayableCandidate(value);
+    if (!candidate) {
+        return '';
+    }
+
+    if (candidate.startsWith('//')) {
+        try {
+            return `${new URL(baseUrl).protocol}${candidate}`;
+        } catch (error) {
+            return `https:${candidate}`;
+        }
+    }
+
+    try {
+        return new URL(candidate, baseUrl).toString();
+    } catch (error) {
+        return candidate;
+    }
+}
+
+function extractPlayableUrlFromText(text, baseUrl) {
+    const normalizedText = normalizePlayableCandidate(text);
+    if (!normalizedText) {
+        return '';
+    }
+
+    const patterns = [
+        /video\s*:\s*\{[\s\S]{0,1200}?url\s*:\s*['"]([^'"\\]+)['"]/i,
+        /\b(?:const|let|var)\s+main\s*=\s*['"]([^'"\\]+)['"]/i,
+        /\b(?:const|let|var)\s+url\s*=\s*['"]([^'"\\]+\.(?:m3u8|mp4|webm|ogg|ogv|m4v)(?:\?[^'"\\]*)?)['"]/i,
+        /['"](https?:\/\/[^'"\\]+\.(?:m3u8|mp4|webm|ogg|ogv|m4v)(?:\?[^'"\\]*)?)['"]/i,
+        /['"](\/[^'"\\]+\.(?:m3u8|mp4|webm|ogg|ogv|m4v)(?:\?[^'"\\]*)?)['"]/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalizedText.match(pattern);
+        if (!match?.[1]) {
+            continue;
+        }
+
+        const resolved = resolvePlayableCandidate(match[1], baseUrl);
+        if (resolved && looksLikeDirectMediaUrl(resolved)) {
+            return resolved;
+        }
+    }
+
+    return '';
+}
+
+function inferPlayableUrlByPattern(targetUrl) {
+    try {
+        const parsedTargetUrl = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(String(targetUrl || ''));
+        const pathname = String(parsedTargetUrl.pathname || '');
+
+        if (parsedTargetUrl.hostname === 'hn.bfvvs.com' && /^\/play\/[^/]+\/?$/.test(pathname)) {
+            const normalizedPath = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+            return new URL(`${normalizedPath}/index.m3u8${parsedTargetUrl.search || ''}`, parsedTargetUrl.origin).toString();
+        }
+    } catch (error) {
+        return '';
+    }
+
+    return '';
+}
+
+function buildPlaybackStreamPath(targetUrl) {
+    return `/api/playback/stream?url=${encodeURIComponent(targetUrl)}`;
+}
+
+function rewriteM3u8Manifest(content, baseUrl) {
+    const source = String(content || '');
+    if (!source.trim()) {
+        return source;
+    }
+
+    return source
+        .split('\n')
+        .map(line => {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) {
+                return line;
+            }
+
+            if (trimmedLine.startsWith('#')) {
+                return line.replace(/URI="([^"]+)"/g, (match, uriValue) => {
+                    const absoluteUrl = resolvePlayableCandidate(uriValue, baseUrl);
+                    return absoluteUrl ? `URI="${buildPlaybackStreamPath(absoluteUrl)}"` : match;
+                });
+            }
+
+            const absoluteUrl = resolvePlayableCandidate(trimmedLine, baseUrl);
+            return absoluteUrl ? buildPlaybackStreamPath(absoluteUrl) : line;
+        })
+        .join('\n');
+}
+
+function inferMediaContentType(targetUrl) {
+    try {
+        const parsedTargetUrl = targetUrl instanceof URL
+            ? targetUrl
+            : new URL(String(targetUrl || ''));
+        const extension = path.extname(parsedTargetUrl.pathname || '').toLowerCase();
+        return MIME_TYPES[extension] || 'application/octet-stream';
+    } catch (error) {
+        return 'application/octet-stream';
+    }
+}
+
+function streamViaCurl(targetUrl, res, options = {}) {
+    const child = spawn('curl', buildCurlArgs(targetUrl, {
+        accept: options.accept || 'Accept: */*',
+        maxTimeSeconds: options.maxTimeSeconds ?? 0,
+        skipProxy: Boolean(options.skipProxy)
+    }), {
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let responseStarted = false;
+    let stderr = '';
+
+    const cleanup = () => {
+        if (!child.killed) {
+            child.kill('SIGTERM');
+        }
+    };
+
+    res.on('close', cleanup);
+
+    child.on('error', error => {
+        res.off('close', cleanup);
+        if (responseStarted) {
+            res.destroy(error);
+            return;
+        }
+
+        sendJson(res, 502, {
+            error: '播放流代理启动失败',
+            details: error.message
+        });
+    });
+
+    child.stderr.on('data', chunk => {
+        stderr += chunk.toString('utf8');
+    });
+
+    child.stdout.on('data', chunk => {
+        if (!responseStarted) {
+            responseStarted = true;
+            setNoCacheHeaders(res);
+            res.writeHead(200, {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': options.contentType || inferMediaContentType(targetUrl)
+            });
+        }
+
+        res.write(chunk);
+    });
+
+    child.stdout.on('end', () => {
+        if (responseStarted && !res.writableEnded) {
+            res.end();
+        }
+    });
+
+    child.on('close', code => {
+        res.off('close', cleanup);
+        if (code !== 0) {
+            const details = stderr.trim() || '上游播放流读取失败';
+            console.error('[server] 播放流代理失败:', details);
+
+            if (!responseStarted) {
+                sendJson(res, 502, {
+                    error: '播放流读取失败',
+                    details
+                });
+                return;
+            }
+
+            res.destroy(new Error(details));
+            return;
+        }
+
+        if (!responseStarted) {
+            setNoCacheHeaders(res);
+            res.writeHead(200, {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': options.contentType || inferMediaContentType(targetUrl)
+            });
+            res.end();
+        }
+    });
 }
 
 async function handleMusicDownload(req, res) {
@@ -521,6 +751,150 @@ async function handleProxy(req, res) {
     }
 }
 
+async function handlePlaybackResolve(req, res) {
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+    const targetUrl = requestUrl.searchParams.get('url');
+
+    if (!targetUrl) {
+        sendJson(res, 400, { error: '缺少url参数' });
+        return;
+    }
+
+    let parsedTargetUrl;
+    try {
+        parsedTargetUrl = new URL(targetUrl);
+    } catch (error) {
+        sendJson(res, 400, { error: 'url参数无效' });
+        return;
+    }
+
+    if (!['http:', 'https:'].includes(parsedTargetUrl.protocol)) {
+        sendJson(res, 400, { error: '仅支持 http/https 协议' });
+        return;
+    }
+
+    if (looksLikeDirectMediaUrl(parsedTargetUrl)) {
+        sendJson(res, 200, {
+            url: parsedTargetUrl.toString(),
+            resolved: false,
+            source: 'direct'
+        });
+        return;
+    }
+
+    const inferredUrl = inferPlayableUrlByPattern(parsedTargetUrl);
+    if (inferredUrl) {
+        sendJson(res, 200, {
+            url: inferredUrl,
+            resolved: true,
+            source: 'pattern'
+        });
+        return;
+    }
+
+    try {
+        const response = await requestViaCurl(parsedTargetUrl, {
+            accept: 'Accept: text/html,application/vnd.apple.mpegurl,application/x-mpegURL,video/*,*/*',
+            skipProxy: true
+        });
+        const contentType = String(response.contentType || '').toLowerCase();
+
+        if (contentType.includes('application/vnd.apple.mpegurl') || contentType.includes('application/x-mpegurl')) {
+            sendJson(res, 200, {
+                url: parsedTargetUrl.toString(),
+                resolved: false,
+                source: 'direct'
+            });
+            return;
+        }
+
+        const resolvedUrl = extractPlayableUrlFromText(response.body, parsedTargetUrl.toString());
+        if (!resolvedUrl) {
+            sendJson(res, 422, {
+                error: '当前播放页未解析出真实视频地址',
+                upstream: parsedTargetUrl.toString()
+            });
+            return;
+        }
+
+        sendJson(res, 200, {
+            url: resolvedUrl,
+            resolved: true,
+            source: 'html'
+        });
+    } catch (error) {
+        const mappedError = mapProxyError(error);
+        sendJson(res, mappedError.statusCode, {
+            error: mappedError.error,
+            error_code: mappedError.errorCode,
+            details: error.message,
+            upstream: parsedTargetUrl.toString()
+        });
+    }
+}
+
+async function handlePlaybackStream(req, res) {
+    const requestUrl = new URL(req.url, `http://${req.headers.host}`);
+    const targetUrl = requestUrl.searchParams.get('url');
+
+    if (!targetUrl) {
+        sendJson(res, 400, { error: '缺少url参数' });
+        return;
+    }
+
+    let parsedTargetUrl;
+    try {
+        parsedTargetUrl = new URL(targetUrl);
+    } catch (error) {
+        sendJson(res, 400, { error: 'url参数无效' });
+        return;
+    }
+
+    if (!['http:', 'https:'].includes(parsedTargetUrl.protocol)) {
+        sendJson(res, 400, { error: '仅支持 http/https 协议' });
+        return;
+    }
+
+    try {
+        if (isM3u8Url(parsedTargetUrl)) {
+            const response = await requestViaCurl(parsedTargetUrl, {
+                accept: 'Accept: application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
+                skipProxy: true
+            });
+
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                sendJson(res, 502, {
+                    error: `上游播放清单响应异常（${response.statusCode}）`,
+                    upstream: parsedTargetUrl.toString()
+                });
+                return;
+            }
+
+            const manifest = rewriteM3u8Manifest(response.body, parsedTargetUrl.toString());
+            setNoCacheHeaders(res);
+            res.writeHead(200, {
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8'
+            });
+            res.end(manifest);
+            return;
+        }
+
+        streamViaCurl(parsedTargetUrl, res, {
+            contentType: inferMediaContentType(parsedTargetUrl),
+            skipProxy: true
+        });
+    } catch (error) {
+        const mappedError = mapProxyError(error);
+        sendJson(res, mappedError.statusCode, {
+            error: mappedError.error,
+            error_code: mappedError.errorCode,
+            details: error.message,
+            upstream: parsedTargetUrl.toString()
+        });
+    }
+}
+
 async function handleMusicApi(req, res) {
     const requestUrl = new URL(req.url, `http://${req.headers.host}`);
 
@@ -643,6 +1017,16 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname === '/api/proxy') {
         await handleProxy(req, res);
+        return;
+    }
+
+    if (requestUrl.pathname === '/api/playback/resolve') {
+        await handlePlaybackResolve(req, res);
+        return;
+    }
+
+    if (requestUrl.pathname === '/api/playback/stream') {
+        await handlePlaybackStream(req, res);
         return;
     }
 
